@@ -73,7 +73,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-bold text-xl tracking-tight">Forensic Latency Analyzer</h1>
-              <p className="text-xs text-slate-500 font-mono">v5.0.0-compliant</p>
+              <p className="text-xs text-slate-500 font-mono">v7.0.0-compliant</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
