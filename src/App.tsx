@@ -14,9 +14,18 @@ import {
   Clock,
   HardDrive,
   Layers,
-  Loader2
+  Loader2,
+  LayoutDashboard,
+  Search,
+  Zap,
+  Stethoscope,
+  Share2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import SystemTransparency from "./components/SystemTransparency";
+import DatabaseExplorer from "./components/DatabaseExplorer";
+import ForensicGraph from "./components/ForensicGraph";
+import DoctorReport from "./components/DoctorReport";
 
 interface MetricState {
   cpu_pressure: number;
@@ -58,7 +67,7 @@ export default function App() {
   const [loop, setLoop] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
-  const [activeTab, setActiveTab] = useState<"live" | "history">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "transparency" | "map" | "doctor" | "history">("live");
   const [metrics, setMetrics] = useState<MetricState>({
     cpu_pressure: 0,
     memory_pressure: 0,
@@ -236,15 +245,38 @@ export default function App() {
             <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
               <button 
                 onClick={() => setActiveTab("live")}
-                className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${activeTab === "live" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === "live" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
               >
-                Live Audit
+                <Terminal className="w-3 h-3" />
+                Live
+              </button>
+              <button 
+                onClick={() => setActiveTab("transparency")}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === "transparency" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                <LayoutDashboard className="w-3 h-3" />
+                Transparency
+              </button>
+              <button 
+                onClick={() => setActiveTab("map")}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === "map" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                <Share2 className="w-3 h-3" />
+                System Map
+              </button>
+              <button 
+                onClick={() => setActiveTab("doctor")}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === "doctor" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                <Stethoscope className="w-3 h-3" />
+                Doctor
               </button>
               <button 
                 onClick={() => setActiveTab("history")}
-                className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${activeTab === "history" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === "history" ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"}`}
               >
-                Audit History
+                <Database className="w-3 h-3" />
+                History
               </button>
             </div>
 
@@ -293,174 +325,129 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-[1600px] mx-auto p-6 grid grid-cols-12 gap-6">
-        {/* Left Column: Metrics & Compliance */}
-        <div className="col-span-12 lg:col-span-4 space-y-6">
-          {/* Pulse Metrics */}
-          <section className="grid grid-cols-2 gap-4">
-            <MetricCard 
-              icon={<Cpu className="w-5 h-5" />} 
-              label="CPU Pressure" 
-              value={`${metrics.cpu_pressure}%`} 
-              status={metrics.cpu_pressure > 5 ? "critical" : "normal"}
-            />
-            <MetricCard 
-              icon={<Layers className="w-5 h-5" />} 
-              label="Memory Pressure" 
-              value={`${metrics.memory_pressure}%`} 
-              status={metrics.memory_pressure > 5 ? "critical" : "normal"}
-            />
-            <MetricCard 
-              icon={<HardDrive className="w-5 h-5" />} 
-              label="Disk Util" 
-              value={`${metrics.disk_util}%`} 
-              status={metrics.disk_util > 80 ? "critical" : "normal"}
-            />
-            <MetricCard 
-              icon={<Shield className="w-5 h-5" />} 
-              label="SELinux Mode" 
-              value={metrics.selinux_mode} 
-              status={metrics.selinux_mode === "Enforcing" ? "warning" : "normal"}
-            />
-          </section>
+      <main className="max-w-[1600px] mx-auto p-6">
+        <AnimatePresence mode="wait">
+          {activeTab === "live" && (
+            <motion.div 
+              key="live"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="grid grid-cols-12 gap-6"
+            >
+              {/* Left Column: Metrics & Compliance */}
+              <div className="col-span-12 lg:col-span-4 space-y-6">
+                {/* Pulse Metrics */}
+                <section className="grid grid-cols-2 gap-4">
+                  <MetricCard 
+                    icon={<Cpu className="w-5 h-5" />} 
+                    label="CPU Pressure" 
+                    value={`${metrics.cpu_pressure}%`} 
+                    status={metrics.cpu_pressure > 5 ? "critical" : "normal"}
+                  />
+                  <MetricCard 
+                    icon={<Layers className="w-5 h-5" />} 
+                    label="Memory Pressure" 
+                    value={`${metrics.memory_pressure}%`} 
+                    status={metrics.memory_pressure > 5 ? "critical" : "normal"}
+                  />
+                  <MetricCard 
+                    icon={<HardDrive className="w-5 h-5" />} 
+                    label="Disk Util" 
+                    value={`${metrics.disk_util}%`} 
+                    status={metrics.disk_util > 80 ? "critical" : "normal"}
+                  />
+                  <MetricCard 
+                    icon={<Shield className="w-5 h-5" />} 
+                    label="SELinux Mode" 
+                    value={metrics.selinux_mode} 
+                    status={metrics.selinux_mode === "Enforcing" ? "warning" : "normal"}
+                  />
+                </section>
 
-          {/* Restored System Health Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <h3 className="font-bold flex items-center gap-2 mb-4">
-              <Activity className="w-4 h-4 text-emerald-400" />
-              System Health
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <span className="text-[10px] text-slate-500 uppercase font-bold">Load Avg</span>
-                <p className="text-lg font-mono font-bold text-white">{metrics.load_avg}</p>
-              </div>
-              <div className="space-y-1">
-                <span className="text-[10px] text-slate-500 uppercase font-bold">TCP Conns</span>
-                <p className="text-lg font-mono font-bold text-white">{metrics.tcp_conns}</p>
-              </div>
-              <div className="space-y-1">
-                <span className="text-[10px] text-slate-500 uppercase font-bold">Open Files</span>
-                <p className="text-lg font-mono font-bold text-white">{metrics.open_files}</p>
-              </div>
-              <div className="space-y-1">
-                <span className="text-[10px] text-slate-500 uppercase font-bold">Uptime</span>
-                <p className="text-[10px] font-mono text-slate-400 truncate">{metrics.uptime}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* CPU Core Heatmap */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <h3 className="font-bold flex items-center gap-2 mb-4">
-              <Cpu className="w-4 h-4 text-blue-400" />
-              CPU Core Load (Idle %)
-            </h3>
-            <div className="grid grid-cols-4 gap-2">
-              {Object.entries(metrics.core_idle).map(([core, idle]) => {
-                const idleVal = idle as number;
-                return (
-                  <div key={core} className="flex flex-col items-center gap-1">
-                    <div 
-                      className={`w-full h-8 rounded border transition-all duration-500 ${
-                        idleVal < 5 ? "bg-red-500/40 border-red-500/60" :
-                        idleVal < 20 ? "bg-amber-500/40 border-amber-500/60" :
-                        "bg-emerald-500/40 border-emerald-500/60"
-                      }`}
-                    />
-                    <span className="text-[8px] font-mono text-slate-500">#{core}</span>
+                {/* Restored System Health Card */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                  <h3 className="font-bold flex items-center gap-2 mb-4">
+                    <Activity className="w-4 h-4 text-emerald-400" />
+                    System Health
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Load Avg</span>
+                      <p className="text-lg font-mono font-bold text-white">{metrics.load_avg}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">TCP Conns</span>
+                      <p className="text-lg font-mono font-bold text-white">{metrics.tcp_conns}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Open Files</span>
+                      <p className="text-lg font-mono font-bold text-white">{metrics.open_files}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Uptime</span>
+                      <p className="text-[10px] font-mono text-slate-400 truncate">{metrics.uptime}</p>
+                    </div>
                   </div>
-                );
-              })}
-              {Object.keys(metrics.core_idle).length === 0 && (
-                <div className="col-span-4 text-center py-4 text-xs text-slate-600 italic">
-                  Run CPU_CORE module to see data
                 </div>
-              )}
-            </div>
-          </div>
 
-          {/* SELinux Monitor */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 overflow-hidden relative">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold flex items-center gap-2">
-                <Shield className="w-4 h-4 text-blue-400" />
-                Security Auditor
-              </h3>
-              {metrics.selinux_denials > 0 && (
-                <span className="bg-red-500/20 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase animate-pulse">
-                  Denials Detected
-                </span>
-              )}
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Recent AVC Denials</span>
-                <span className={`font-mono font-bold ${metrics.selinux_denials > 0 ? "text-red-400" : "text-green-400"}`}>
-                  {metrics.selinux_denials}
-                </span>
-              </div>
-              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-500 ${metrics.selinux_denials > 0 ? "bg-red-500" : "bg-green-500"}`}
-                  style={{ width: `${Math.min(metrics.selinux_denials * 10, 100)}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Compliance Checklist */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <h3 className="font-bold flex items-center gap-2 mb-4">
-              <CheckCircle2 className="w-4 h-4 text-green-400" />
-              Compliance Pipeline (Click to Run)
-            </h3>
-            <div className="grid grid-cols-3 gap-2">
-              {MODULE_LIST.map(name => (
-                <button 
-                  key={name}
-                  onClick={() => !isRunning && runProbe(name)}
-                  disabled={isRunning}
-                  className={`text-[10px] font-mono p-1.5 rounded border transition-all duration-300 flex items-center justify-center text-center ${
-                    modules[name] === "success" ? "bg-green-500/10 border-green-500/30 text-green-400" :
-                    modules[name] === "running" ? "bg-blue-500/10 border-blue-500/30 text-blue-400 animate-pulse" :
-                    "bg-slate-800/50 border-slate-700 text-slate-500 hover:bg-slate-700/50 hover:border-slate-600"
-                  }`}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Log Browser */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <h3 className="font-bold flex items-center gap-2 mb-4">
-              <FileText className="w-4 h-4 text-slate-400" />
-              Forensic Logs
-            </h3>
-            <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
-              {logs.map((log, i) => (
-                <div key={i} className="group flex items-center justify-between p-2 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-700">
-                  <span className="text-xs font-mono text-slate-400 truncate">{log}</span>
-                  <Activity className="w-3 h-3 text-slate-600 group-hover:text-blue-400" />
+                {/* CPU Core Heatmap */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                  <h3 className="font-bold flex items-center gap-2 mb-4">
+                    <Cpu className="w-4 h-4 text-blue-400" />
+                    CPU Core Load (Idle %)
+                  </h3>
+                  <div className="grid grid-cols-4 gap-2">
+                    {Object.entries(metrics.core_idle).map(([core, idle]) => {
+                      const idleVal = idle as number;
+                      return (
+                        <div key={core} className="flex flex-col items-center gap-1">
+                          <div 
+                            className={`w-full h-8 rounded border transition-all duration-500 ${
+                              idleVal < 5 ? "bg-red-500/40 border-red-500/60" :
+                              idleVal < 20 ? "bg-amber-500/40 border-amber-500/60" :
+                              "bg-emerald-500/40 border-emerald-500/60"
+                            }`}
+                          />
+                          <span className="text-[8px] font-mono text-slate-500">#{core}</span>
+                        </div>
+                      );
+                    })}
+                    {Object.keys(metrics.core_idle).length === 0 && (
+                      <div className="col-span-4 text-center py-4 text-xs text-slate-600 italic">
+                        Run CPU_CORE module to see data
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
 
-        {/* Right Column: Alerts & Terminal / History */}
-        <div className="col-span-12 lg:col-span-8 space-y-6">
-          <AnimatePresence mode="wait">
-            {activeTab === "live" ? (
-              <motion.div 
-                key="live"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-6"
-              >
+                {/* Compliance Checklist */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                  <h3 className="font-bold flex items-center gap-2 mb-4">
+                    <CheckCircle2 className="w-4 h-4 text-green-400" />
+                    Compliance Pipeline (Click to Run)
+                  </h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {MODULE_LIST.map(name => (
+                      <button 
+                        key={name}
+                        onClick={() => !isRunning && runProbe(name)}
+                        disabled={isRunning}
+                        className={`text-[10px] font-mono p-1.5 rounded border transition-all duration-300 flex items-center justify-center text-center ${
+                          modules[name] === "success" ? "bg-green-500/10 border-green-500/30 text-green-400" :
+                          modules[name] === "running" ? "bg-blue-500/10 border-blue-500/30 text-blue-400 animate-pulse" :
+                          "bg-slate-800/50 border-slate-700 text-slate-500 hover:bg-slate-700/50 hover:border-slate-600"
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Alerts & Terminal */}
+              <div className="col-span-12 lg:col-span-8 space-y-6">
                 {/* Alert Feed */}
                 {alerts.length > 0 && (
                   <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-5">
@@ -512,53 +499,54 @@ export default function App() {
                     )}
                   </pre>
                 </div>
-              </motion.div>
-            ) : (
-              <motion.div 
-                key="history"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-[calc(100vh-12rem)] flex flex-col"
-              >
-                <div className="bg-slate-800 px-6 py-4 border-b border-slate-700">
-                  <h3 className="font-bold flex items-center gap-2">
-                    <Database className="w-4 h-4 text-blue-400" />
-                    Audit Database History
-                  </h3>
-                </div>
-                <div className="flex-1 overflow-auto p-6 space-y-4 custom-scrollbar">
-                  {runs.length > 0 ? (
-                    runs.map((run) => (
-                      <div key={run.id} className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 hover:bg-slate-800 transition-all group">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <span className="bg-slate-700 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase font-mono">ID: {run.id}</span>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${run.status === "SUCCESS" ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
-                              {run.status}
-                            </span>
-                            <span className="text-xs text-slate-500 font-mono">{run.timestamp}</span>
-                          </div>
-                          <span className="text-xs font-bold text-blue-400">{run.mode}</span>
-                        </div>
-                        {run.summary && (
-                          <div className="text-sm text-slate-300 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 font-mono whitespace-pre-wrap">
-                            {run.summary}
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
-                      <Database className="w-12 h-12 opacity-20" />
-                      <p>No historical audits found in the database.</p>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "transparency" && (
+            <motion.div
+              key="transparency"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <SystemTransparency />
+            </motion.div>
+          )}
+
+          {activeTab === "map" && (
+            <motion.div
+              key="map"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <ForensicGraph />
+            </motion.div>
+          )}
+
+          {activeTab === "doctor" && (
+            <motion.div
+              key="doctor"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <DoctorReport />
+            </motion.div>
+          )}
+
+          {activeTab === "history" && (
+            <motion.div 
+              key="history"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <DatabaseExplorer />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
       <style>{`

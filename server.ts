@@ -6,6 +6,11 @@ import { spawn } from "child_process";
 import fs from "fs";
 import cors from "cors";
 import Database from "better-sqlite3";
+import os from "os";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,9 +31,115 @@ async function startServer() {
 
   const db = new Database(DB_FILE);
 
+  // Idempotent Schema Initialization (Matching Python Probe)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      mode TEXT,
+      status TEXT,
+      log_path TEXT,
+      html_path TEXT,
+      summary TEXT
+    );
+    CREATE TABLE IF NOT EXISTS metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER,
+      key TEXT,
+      value REAL,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(run_id) REFERENCES runs(id)
+    );
+    CREATE TABLE IF NOT EXISTS alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER,
+      severity TEXT,
+      message TEXT,
+      FOREIGN KEY(run_id) REFERENCES runs(id)
+    );
+  `);
+
   // API Routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", version: "13.0.0" });
+  });
+
+  app.get("/api/system-metrics", (req, res) => {
+    const cpus = os.cpus();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const loadAvg = os.loadavg();
+    const uptime = os.uptime();
+
+    res.json({
+      cpus: cpus.map(cpu => ({
+        model: cpu.model,
+        speed: cpu.speed,
+        times: cpu.times
+      })),
+      memory: {
+        total: totalMem,
+        free: freeMem,
+        used: totalMem - freeMem,
+        percent: ((totalMem - freeMem) / totalMem) * 100
+      },
+      loadAvg,
+      uptime,
+      platform: os.platform(),
+      release: os.release(),
+      arch: os.arch()
+    });
+  });
+
+  app.get("/api/processes", async (req, res) => {
+    try {
+      const { stdout } = await execAsync("ps aux --sort=-%cpu | head -n 20");
+      const lines = stdout.split("\n").filter(l => l.trim().length > 0);
+      const headers = lines[0].split(/\s+/);
+      const processes = lines.slice(1).map(line => {
+        const parts = line.split(/\s+/);
+        const obj: any = {};
+        headers.forEach((h, i) => {
+          if (i === headers.length - 1) {
+            obj[h] = parts.slice(i).join(" ");
+          } else {
+            obj[h] = parts[i];
+          }
+        });
+        return obj;
+      });
+      res.json(processes);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/doctor", async (req, res) => {
+    const tools = ["python3", "perf", "bpftrace", "ss", "netstat", "blktrace", "bcc", "auditd"];
+    const results: any = {};
+    for (const tool of tools) {
+      try {
+        await execAsync(`which ${tool}`);
+        results[tool] = { status: "OK", path: "found" };
+      } catch {
+        results[tool] = { status: "MISSING", path: null };
+      }
+    }
+    res.json(results);
+  });
+
+  app.get("/api/network", async (req, res) => {
+    try {
+      const { stdout } = await execAsync("ss -tunap | head -n 50");
+      res.json({ raw: stdout });
+    } catch {
+      try {
+        const { stdout } = await execAsync("netstat -tunap | head -n 50");
+        res.json({ raw: stdout });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    }
   });
 
   app.post("/api/run-probe", (req, res) => {
