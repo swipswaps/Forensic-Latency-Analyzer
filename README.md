@@ -10,10 +10,11 @@
 - **v6**: Added "Hidden Load" detection (execsnoop, IRQ affinity) to diagnose 100% core saturation with no visible PID.
 - **v7**: Cumulative restoration of all features. Re-integrated PSI, scheduler, memory, disk, network, and kernel modules with v6 upgrades. Added Multi-Distro (APT/DNF) support.
 - **v8**: Full request compliance restoration. Re-implemented all advanced tool calls (perf, blktrace, ftrace, bpftrace). Upgraded backend to real-time chunked streaming.
-- **v9 (Current)**: Added SELinux Forensic Audit. Checks for AVC denials, policy status, and correlates auditd overhead with security denials.
+- **v9**: Added SELinux Forensic Audit. Checks for AVC denials, policy status, and correlates auditd overhead with security denials.
+- **v10 (Current)**: Restored Automated Ranked Root-Cause Summary and HTML Dashboard generation. Final cumulative request-compliant build.
 
 ## Where we are
-**v9.0.0** is the final, cumulative, request-compliant, single-file forensic probe integrated into a full-stack React/Express application. It self-enforces every requirement at startup and includes deep SELinux introspection.
+**v10.0.0** is the final, cumulative, request-compliant, single-file forensic probe integrated into a full-stack React/Express application. It self-enforces every requirement at startup and provides automated root-cause ranking.
 
 ## What works
 - **100% Request Compliance**: Full file emission, self-healing dependencies (Multi-Distro), TeeLogger captures all stdout/stderr, stack traces everywhere.
