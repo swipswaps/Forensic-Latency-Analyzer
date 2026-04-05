@@ -2,7 +2,7 @@
 # =============================================================================
 # forensic_latency_probe_v13.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.2.0 (ROBUST IDEMPOTENCY)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.2.1 (ROBUST IDEMPOTENCY)
 # =============================================================================
 
 import os
@@ -36,7 +36,7 @@ REQUIRED_TOOLS = [
     "uptime", "lsmod", "numastat", "slabtop",
     "auditctl", "perf", "blktrace", "trace-cmd",
     "bpftrace", "nicstat", "numactl", "iotop",
-    "ausearch", "sestatus"
+    "ausearch", "sestatus", "sar"
 ]
 
 # Mapping for Fedora/DNF
@@ -245,7 +245,7 @@ class TeeLogger:
         self.close()
 
 # =============================================================================
-# SELF-ENFORCING COMPLIANCE LOGIC (v13.2.0 STRICTURE)
+# SELF-ENFORCING COMPLIANCE LOGIC (v13.2.1 STRICTURE)
 # =============================================================================
 def enforce_compliance():
     print("[COMPLIANCE ENFORCEMENT] Verifying Cumulative Feature Set...")
@@ -266,7 +266,7 @@ def enforce_compliance():
     if not isinstance(sys.stdout, TeeLogger):
         raise RuntimeError("CRITICAL COMPLIANCE FAILURE: stdout is not a TeeLogger. Logging is compromised.")
         
-    print("[COMPLIANCE] v13.2.0 Integrity Verified. No omissions.")
+    print("[COMPLIANCE] v13.2.1 Integrity Verified. No omissions.")
 
 # =============================================================================
 # CORE EXECUTION WRAPPER
@@ -306,7 +306,7 @@ def run(cmd, timeout=30, capture_output=False):
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             except ProcessLookupError:
-                pass # Process already exited
+                pass # Process already exited naturally
             p.wait()
         
         t1.join(timeout=2)
@@ -318,7 +318,7 @@ def run(cmd, timeout=30, capture_output=False):
         return None
 
 # =============================================================================
-# FORENSIC MODULES (v13.1.0 COMMAND CENTER)
+# FORENSIC MODULES (v13.2.1 COMMAND CENTER)
 # =============================================================================
 
 def doctor():
@@ -593,7 +593,7 @@ def generate_html_report():
     html_content = f"""
     <html>
     <head>
-        <title>Forensic Latency Report v13.1.0</title>
+        <title>Forensic Latency Report v13.2.1</title>
         <style>
             body {{ font-family: sans-serif; background: #f8f9fa; padding: 20px; }}
             .card {{ background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
@@ -619,9 +619,10 @@ def generate_html_report():
         f.write(html_content)
 
 def run_probe(advanced=False, module=None):
-    global CURRENT_RUN_ID
-    SUMMARY_LINES.clear() # Fix Bug 3: Clear summary between runs
+    global SUMMARY_LINES
+    SUMMARY_LINES = [] # Fix Bug 3: Clear summary between runs (Compliance FIX 1)
     
+    global CURRENT_RUN_ID
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     probe_log = os.path.join(LOG_DIR, f"latency_probe_v13_{probe_ts}.log")
     
