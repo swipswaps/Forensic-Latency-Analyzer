@@ -2,7 +2,7 @@
 # =============================================================================
 # forensic_latency_probe_v13.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.1.0 (ROBUST IDEMPOTENCY)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.2.0 (ROBUST IDEMPOTENCY)
 # =============================================================================
 
 import os
@@ -175,19 +175,16 @@ class DependencyManager:
     def ensure_deps():
         print("\n[MODULE:DEPS] VERIFYING SYSTEM DEPENDENCIES")
         
-        # 1. Check marker file for fast idempotency
-        if os.path.exists(DEPS_MARKER):
-            print("[DEPS:IDEMPOTENT] Marker file found. Skipping full install.")
-            return
-
-        # 2. Verify individual tools
+        # 1. Verify individual tools (Always check)
         missing = [t for t in REQUIRED_TOOLS if shutil.which(t) is None]
         if not missing:
             print("[DEPS:SUCCESS] All tools present in PATH.")
-            with open(DEPS_MARKER, "w") as f: f.write(datetime.datetime.now().isoformat())
+            if not os.path.exists(DEPS_MARKER):
+                with open(DEPS_MARKER, "w") as f: f.write(datetime.datetime.now().isoformat())
             return
 
-        # 3. Recoverable Installation with Retries
+        # 2. Check marker file for skipping update/install if we already tried recently
+        # But we still try to install if tools are missing
         print(f"[DEPS:ACTION] Missing tools detected: {missing}. Initiating recoverable install.")
         
         # Check for non-interactive sudo
@@ -198,7 +195,8 @@ class DependencyManager:
         for attempt in range(3):
             try:
                 if shutil.which("apt-get"):
-                    run(["sudo", "-n", "apt-get", "update"], timeout=60)
+                    if not os.path.exists(DEPS_MARKER):
+                        run(["sudo", "-n", "apt-get", "update"], timeout=60)
                     ret = run(["sudo", "-n", "apt-get", "install", "-y"] + APT_PACKAGES, timeout=120)
                     if ret == 0: break
                 elif shutil.which("dnf"):
@@ -209,7 +207,7 @@ class DependencyManager:
                 print(f"[DEPS:RETRY] Attempt {attempt+1} failed: {e}")
                 time.sleep(5)
         
-        # 4. Final Verification
+        # 3. Final Verification
         missing_after = [t for t in REQUIRED_TOOLS if shutil.which(t) is None]
         if missing_after:
             print(f"[DEPS:WARNING] Some tools still missing after install: {missing_after}")
@@ -247,7 +245,7 @@ class TeeLogger:
         self.close()
 
 # =============================================================================
-# SELF-ENFORCING COMPLIANCE LOGIC (v13.1.0 STRICTURE)
+# SELF-ENFORCING COMPLIANCE LOGIC (v13.2.0 STRICTURE)
 # =============================================================================
 def enforce_compliance():
     print("[COMPLIANCE ENFORCEMENT] Verifying Cumulative Feature Set...")
@@ -258,7 +256,7 @@ def enforce_compliance():
         "perf_analysis", "block_layer_trace", "kernel_function_trace",
         "scheduler_latency_hist", "numa_audit", "network_interface_stats",
         "selinux_audit", "auditd_check", "rank_root_causes", "generate_html_report",
-        "doctor"
+        "doctor", "perf_stat_system", "irq_rate_audit"
     ]
     for req in required:
         if req not in globals():
@@ -266,9 +264,9 @@ def enforce_compliance():
     
     # Verify TeeLogger assignment
     if not isinstance(sys.stdout, TeeLogger):
-        print("[COMPLIANCE:WARNING] stdout is not a TeeLogger. Logging might be incomplete.")
+        raise RuntimeError("CRITICAL COMPLIANCE FAILURE: stdout is not a TeeLogger. Logging is compromised.")
         
-    print("[COMPLIANCE] v13.1.0 Integrity Verified. No omissions.")
+    print("[COMPLIANCE] v13.2.0 Integrity Verified. No omissions.")
 
 # =============================================================================
 # CORE EXECUTION WRAPPER
@@ -305,7 +303,10 @@ def run(cmd, timeout=30, capture_output=False):
             p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             print(f"[TIMEOUT] Command timed out after {timeout}s. Killing process group...")
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass # Process already exited
             p.wait()
         
         t1.join(timeout=2)
@@ -360,12 +361,14 @@ def doctor():
     # Check for systemd-oomd
     if shutil.which("systemctl"):
         print("[DOCTOR:AUDIT] Checking systemd-oomd status...")
-        run(["systemctl", "status", "systemd-oomd"], timeout=5)
+        run(["systemctl", "status", "systemd-oomd", "--no-pager"], timeout=5)
+        print("[DOCTOR:AUDIT] Fetching systemd-oomd journal (last 1h)...")
+        run(["journalctl", "-u", "systemd-oomd", "--since", "1 hour ago", "--no-pager"], timeout=15)
     
     # Check for dbus-broker
     if shutil.which("systemctl"):
         print("[DOCTOR:AUDIT] Checking dbus-broker status...")
-        run(["systemctl", "status", "dbus-broker"], timeout=5)
+        run(["systemctl", "status", "dbus-broker", "--no-pager"], timeout=5)
 
     # Check entropy
     if os.path.exists("/proc/sys/kernel/random/entropy_avail"):
@@ -435,10 +438,15 @@ def cpu_sched():
         if match:
             print(f"[METRIC:LOAD_AVG] {match.group(1)}")
 
-def perf_analysis():
+def perf_analysis(probe_ts):
     print("\n[MODULE:PERF] CPU CYCLE AND SCHEDULER TRACING (5s)")
-    run(["sudo", "perf", "record", "-a", "-g", "sleep", "5"], timeout=10)
-    run(["sudo", "perf", "report", "--stdio", "--max-stack", "10"])
+    perf_data = os.path.join(LOG_DIR, f"perf_{probe_ts}.data")
+    run(["sudo", "perf", "record", "-o", perf_data, "-a", "-g", "sleep", "5"], timeout=10)
+    run(["sudo", "perf", "report", "-i", perf_data, "--stdio", "--max-stack", "10"])
+
+def perf_stat_system():
+    print("\n[MODULE:PERF_STAT] SYSTEM-WIDE HARDWARE COUNTERS (5s)")
+    run(["sudo", "perf", "stat", "-a", "sleep", "5"], timeout=10)
 
 def memory():
     print("\n[MODULE:MEM] MEMORY PRESSURE AND SLAB AUDIT")
@@ -475,7 +483,7 @@ def disk():
 
 def block_layer_trace():
     print("\n[MODULE:BLKTRACE] BLOCK LAYER LATENCY TRACE (5s)")
-    disk_dev_out = run(["bash", "-c", "lsblk -no NAME | head -n 1"], capture_output=True)
+    disk_dev_out = run(["bash", "-c", 'lsblk -no NAME,TYPE | awk \'$2=="disk"{print $1; exit}\''], capture_output=True)
     if disk_dev_out:
         disk_dev = disk_dev_out.strip()
         dev_path = f"/dev/{disk_dev}"
@@ -488,6 +496,7 @@ def network():
     print("\n[MODULE:NET] SOCKET AND PROTOCOL AUDIT")
     run(["ss", "-tulnp"])
     run(["ss", "-ti"])
+    run(["ss", "-s"])
     run(["netstat", "-s"])
     
     # Restored Network Latency & TCP metrics
@@ -524,6 +533,11 @@ def irq_affinity_audit():
     print("\n[MODULE:IRQ] AFFINITY AND INTERRUPT STORM AUDIT")
     run(["bash", "-c", "grep . /proc/irq/*/smp_affinity_list"])
     run(["cat", "/proc/interrupts"])
+
+def irq_rate_audit():
+    print("\n[MODULE:IRQ_RATE] INTERRUPT RATE AUDIT (5s)")
+    if shutil.which("sar"):
+        run(["sar", "-I", "ALL", "1", "5"], timeout=10)
 
 def auditd_check():
     print("\n[MODULE:AUDITD] LOGGING OVERHEAD AUDIT")
@@ -606,6 +620,8 @@ def generate_html_report():
 
 def run_probe(advanced=False, module=None):
     global CURRENT_RUN_ID
+    SUMMARY_LINES.clear() # Fix Bug 3: Clear summary between runs
+    
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     probe_log = os.path.join(LOG_DIR, f"latency_probe_v13_{probe_ts}.log")
     
@@ -624,6 +640,8 @@ def run_probe(advanced=False, module=None):
                 "PSI": psi,
                 "CPU_CORE": core_imbalance_check,
                 "CPU_SCHED": cpu_sched,
+                "PERF_STAT": perf_stat_system,
+                "IRQ_RATE": irq_rate_audit,
                 "MEM": memory,
                 "NUMA": numa_audit,
                 "DISK": disk,
@@ -636,7 +654,7 @@ def run_probe(advanced=False, module=None):
                 "AUDITD": auditd_check,
                 "SELINUX": selinux_audit,
                 "BCC": short_lived_process_trace,
-                "PERF": perf_analysis,
+                "PERF": lambda: perf_analysis(probe_ts),
                 "BLKTRACE": block_layer_trace,
                 "BPFTRACE": scheduler_latency_hist,
                 "SUMMARY": rank_root_causes,
@@ -656,6 +674,8 @@ def run_probe(advanced=False, module=None):
                 psi()
                 core_imbalance_check()
                 cpu_sched()
+                perf_stat_system()
+                irq_rate_audit()
                 memory()
                 numa_audit()
                 disk()
@@ -669,7 +689,7 @@ def run_probe(advanced=False, module=None):
                 short_lived_process_trace()
                 
                 if advanced:
-                    perf_analysis()
+                    perf_analysis(probe_ts)
                     block_layer_trace()
                     kernel_function_trace()
                     scheduler_latency_hist()

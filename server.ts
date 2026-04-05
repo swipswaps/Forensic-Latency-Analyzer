@@ -61,7 +61,7 @@ async function startServer() {
 
   // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "13.1.0" });
+    res.json({ status: "ok", version: "13.2.0" });
   });
 
   app.get("/api/system-metrics", (req, res) => {
@@ -115,7 +115,7 @@ async function startServer() {
   });
 
   app.get("/api/doctor", async (req, res) => {
-    const tools = ["python3", "perf", "bpftrace", "ss", "netstat", "blktrace", "bcc", "auditd", "trace-cmd", "nicstat", "numactl"];
+    const tools = ["python3", "perf", "bpftrace", "ss", "netstat", "blktrace", "execsnoop", "auditd", "trace-cmd", "nicstat", "numactl"];
     const results: any = {};
     for (const tool of tools) {
       try {
