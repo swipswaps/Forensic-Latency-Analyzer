@@ -20,13 +20,19 @@ import signal
 from threading import Thread
 
 # =============================================================================
-# CONFIGURATION & CONSTANTS
+# CONFIGURATION & CONSTANTS (STRICT COMPLIANCE)
 # =============================================================================
 
-LOG_DIR = os.path.abspath("./forensic_logs")
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT")
+if not PROJECT_ROOT:
+    print("FATAL: PROJECT_ROOT environment variable not set. Compliance failure.", file=sys.stderr)
+    sys.exit(1)
+PROJECT_ROOT = os.path.abspath(PROJECT_ROOT)
+
+LOG_DIR = os.path.join(PROJECT_ROOT, "forensic_logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 DB_FILE = os.path.join(LOG_DIR, "forensic_audit.db")
-HTML_FILE = os.path.abspath("./forensic_summary.html")
+HTML_FILE = os.path.join(PROJECT_ROOT, "forensic_summary.html")
 DEPS_MARKER = os.path.join(LOG_DIR, ".deps_installed")
 
 REQUIRED_TOOLS = [
@@ -626,6 +632,10 @@ def run_probe(advanced=False, module=None):
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     probe_log = os.path.join(LOG_DIR, f"latency_probe_v13_{probe_ts}.log")
     
+    # COMPLIANCE: Print absolute path of log as FIRST line of output
+    print(os.path.abspath(probe_log))
+    sys.stdout.flush()
+    
     with TeeLogger(probe_log) as logger:
         sys.stdout = logger
         sys.stderr = logger
@@ -716,7 +726,13 @@ if __name__ == "__main__":
     parser.add_argument("--loop", type=int, default=0)
     parser.add_argument("--advanced", action="store_true")
     parser.add_argument("--module", type=str, default=None)
+    parser.add_argument("--cwd", type=str, required=True, help="Explicit working directory for path validation")
     args = parser.parse_args()
+    
+    # COMPLIANCE: Re-validate internal paths against passed --cwd
+    if os.path.abspath(args.cwd) != PROJECT_ROOT:
+        print(f"FATAL: Passed --cwd ({args.cwd}) does not match PROJECT_ROOT ({PROJECT_ROOT}). Compliance failure.", file=sys.stderr)
+        sys.exit(1)
     
     try:
         if args.loop > 0:

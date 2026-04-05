@@ -237,7 +237,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-bold text-xl tracking-tight text-white">Forensic Latency Analyzer</h1>
-              <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">v13.0.0-compliant • Robust Idempotency</p>
+              <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">v13.2.1-compliant • Strict Request Compliance</p>
             </div>
           </div>
 

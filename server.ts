@@ -164,6 +164,34 @@ async function startServer() {
     res.json(diagnostics);
   });
 
+  app.get("/api/process-tree", async (req, res) => {
+    try {
+      const { stdout } = await execAsync("ps -ax -o ppid,pid,comm --no-headers");
+      const lines = stdout.trim().split("\n");
+      const nodes: any = {};
+      const tree: any = { name: "root", children: [] };
+
+      lines.forEach(line => {
+        const [ppid, pid, ...commParts] = line.trim().split(/\s+/);
+        const comm = commParts.join(" ");
+        nodes[pid] = { name: `${comm} (${pid})`, children: [], value: 1 };
+      });
+
+      lines.forEach(line => {
+        const [ppid, pid] = line.trim().split(/\s+/);
+        if (nodes[ppid] && nodes[pid]) {
+          nodes[ppid].children.push(nodes[pid]);
+        } else if (nodes[pid]) {
+          tree.children.push(nodes[pid]);
+        }
+      });
+
+      res.json(tree);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/run-probe", (req, res) => {
     const { advanced, loop, module } = req.body;
     const args = ["forensic_latency_probe_v13.py"];
@@ -171,10 +199,19 @@ async function startServer() {
     if (loop) args.push("--loop", loop.toString());
     if (module) args.push("--module", module);
 
+    // COMPLIANCE: Explicitly pass current working directory as an argument
+    const projectRoot = process.cwd();
+    args.push("--cwd", projectRoot);
+
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const pythonProcess = spawn("python3", args);
+    const pythonProcess = spawn("python3", args, {
+      env: { 
+        ...process.env, 
+        PROJECT_ROOT: projectRoot 
+      }
+    });
 
     pythonProcess.stdout.on("data", (data) => {
       res.write(data);

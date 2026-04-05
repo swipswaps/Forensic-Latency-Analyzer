@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { Activity, Cpu, Zap, Network, ShieldCheck } from "lucide-react";
+import SunburstChart from "./SunburstChart";
 
 interface ProcessNode extends d3.SimulationNodeDatum {
   id: string;
@@ -134,51 +135,55 @@ export default function ForensicGraph() {
   }, [data]);
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl relative overflow-hidden">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="bg-blue-500/20 p-2 rounded-lg">
-            <Zap className="w-5 h-5 text-blue-400" />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl relative overflow-hidden">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-500/20 p-2 rounded-lg">
+              <Zap className="w-5 h-5 text-blue-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white">Process Topology (D3)</h3>
+              <p className="text-xs text-slate-500 font-mono">Force-directed kernel process mapping</p>
+            </div>
           </div>
-          <div>
-            <h3 className="font-bold text-white">Process Topology (D3)</h3>
-            <p className="text-xs text-slate-500 font-mono">Force-directed kernel process mapping</p>
+          <div className="flex gap-4 text-[10px] font-bold uppercase tracking-wider">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-blue-500" />
+              <span className="text-blue-400">Kernel</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-red-400">High CPU</span>
+            </div>
           </div>
         </div>
-        <div className="flex gap-4 text-[10px] font-bold uppercase tracking-wider">
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="text-blue-400">Kernel</span>
+
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm z-10">
+            <Activity className="w-6 h-6 text-blue-500 animate-spin" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-red-500" />
-            <span className="text-red-400">High CPU</span>
+        )}
+
+        <svg ref={svgRef} className="w-full h-[400px] cursor-grab active:cursor-grabbing" />
+        
+        <div className="mt-4 grid grid-cols-3 gap-4 border-t border-slate-800 pt-4">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span className="text-[10px] font-mono text-slate-400">Isolation: Active</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Network className="w-4 h-4 text-blue-400" />
+            <span className="text-[10px] font-mono text-slate-400">Nodes: {data.nodes.length}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-purple-400" />
+            <span className="text-[10px] font-mono text-slate-400">Audit: Real-time</span>
           </div>
         </div>
       </div>
 
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm z-10">
-          <Activity className="w-6 h-6 text-blue-500 animate-spin" />
-        </div>
-      )}
-
-      <svg ref={svgRef} className="w-full h-[400px] cursor-grab active:cursor-grabbing" />
-      
-      <div className="mt-4 grid grid-cols-3 gap-4 border-t border-slate-800 pt-4">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span className="text-[10px] font-mono text-slate-400">Isolation: Active</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Network className="w-4 h-4 text-blue-400" />
-          <span className="text-[10px] font-mono text-slate-400">Nodes: {data.nodes.length}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-purple-400" />
-          <span className="text-[10px] font-mono text-slate-400">Audit: Real-time</span>
-        </div>
-      </div>
+      <SunburstChart />
     </div>
   );
 }
