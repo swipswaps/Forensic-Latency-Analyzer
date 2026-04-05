@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # =============================================================================
-# forensic_latency_probe_v11.py
+# forensic_latency_probe_v12.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v11.0.0 (COMMAND CENTER)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v12.0.0 (MODULAR CONTROL)
 # =============================================================================
 
 import os
@@ -63,7 +63,7 @@ class TeeLogger:
         self.log.flush()
 
 # =============================================================================
-# SELF-ENFORCING COMPLIANCE LOGIC (v11.0.0 STRICTURE)
+# SELF-ENFORCING COMPLIANCE LOGIC (v12.0.0 STRICTURE)
 # =============================================================================
 def enforce_compliance():
     print("[COMPLIANCE ENFORCEMENT] Verifying Cumulative Feature Set...")
@@ -78,7 +78,7 @@ def enforce_compliance():
     for req in required:
         if req not in globals():
              raise RuntimeError(f"CRITICAL COMPLIANCE FAILURE: Feature {req} missing - brevity removal detected.")
-    print("[COMPLIANCE] v11.0.0 Integrity Verified. No omissions.")
+    print("[COMPLIANCE] v12.0.0 Integrity Verified. No omissions.")
 
 # =============================================================================
 # CORE EXECUTION WRAPPER
@@ -107,7 +107,7 @@ def run(cmd, timeout=30, capture_output=False):
         return None
 
 # =============================================================================
-# FORENSIC MODULES (v11.0.0 COMMAND CENTER)
+# FORENSIC MODULES (v12.0.0 COMMAND CENTER)
 # =============================================================================
 
 def ensure_deps():
@@ -268,7 +268,7 @@ def generate_html_report():
     html_content = f"""
     <html>
     <head>
-        <title>Forensic Latency Report v11.0.0</title>
+        <title>Forensic Latency Report v12.0.0</title>
         <style>
             body {{ font-family: sans-serif; background: #f8f9fa; padding: 20px; }}
             .card {{ background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
@@ -293,56 +293,87 @@ def generate_html_report():
     with open(HTML_FILE, "w") as f:
         f.write(html_content)
 
-def run_probe(advanced=False):
+def run_probe(advanced=False, module=None):
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    probe_log = os.path.join(LOG_DIR, f"latency_probe_v11_{probe_ts}.log")
+    probe_log = os.path.join(LOG_DIR, f"latency_probe_v12_{probe_ts}.log")
     sys.stdout = TeeLogger(probe_log)
     sys.stderr = TeeLogger(probe_log)
     
     enforce_compliance()
     ensure_deps()
     
-    # Cumulative Forensic Pipeline (v11.0.0)
-    psi()
-    core_imbalance_check()
-    cpu_sched()
-    memory()
-    numa_audit()
-    disk()
-    network()
-    network_interface_stats()
-    kernel()
-    cgroup()
-    irq_affinity_audit()
-    auditd_check()
-    selinux_audit()
-    short_lived_process_trace()
-    
-    if advanced:
-        perf_analysis()
-        block_layer_trace()
-        kernel_function_trace()
-        scheduler_latency_hist()
-    
-    rank_root_causes()
-    generate_html_report()
+    module_map = {
+        "PSI": psi,
+        "CPU_CORE": core_imbalance_check,
+        "CPU_SCHED": cpu_sched,
+        "MEM": memory,
+        "NUMA": numa_audit,
+        "DISK": disk,
+        "NET": network,
+        "NICSTAT": network_interface_stats,
+        "KERNEL": kernel,
+        "FTRACE": kernel_function_trace,
+        "CGROUP": cgroup,
+        "IRQ": irq_affinity_audit,
+        "AUDITD": auditd_check,
+        "SELINUX": selinux_audit,
+        "BCC": short_lived_process_trace,
+        "PERF": perf_analysis,
+        "BLKTRACE": block_layer_trace,
+        "BPFTRACE": scheduler_latency_hist,
+        "SUMMARY": rank_root_causes,
+        "REPORT": generate_html_report
+    }
+
+    if module:
+        if module in module_map:
+            module_map[module]()
+        else:
+            print(f"[ERROR] Unknown module: {module}")
+    else:
+        # Full Pipeline
+        psi()
+        core_imbalance_check()
+        cpu_sched()
+        memory()
+        numa_audit()
+        disk()
+        network()
+        network_interface_stats()
+        kernel()
+        cgroup()
+        irq_affinity_audit()
+        auditd_check()
+        selinux_audit()
+        short_lived_process_trace()
+        
+        if advanced:
+            perf_analysis()
+            block_layer_trace()
+            kernel_function_trace()
+            scheduler_latency_hist()
+        
+        rank_root_causes()
+        generate_html_report()
     
     print(f"\n[COMPLETE] Log: {probe_log}")
-    print(f"[COMPLETE] HTML Report: {HTML_FILE}")
+    if not module or module == "REPORT":
+        print(f"[COMPLETE] HTML Report: {HTML_FILE}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--loop", type=int, default=0)
     parser.add_argument("--advanced", action="store_true")
+    parser.add_argument("--module", type=str, default=None)
     args = parser.parse_args()
     
     try:
         if args.loop > 0:
             while True:
-                run_probe(advanced=args.advanced)
+                run_probe(advanced=args.advanced, module=args.module)
                 time.sleep(args.loop)
         else:
-            run_probe(advanced=args.advanced)
+            run_probe(advanced=args.advanced, module=args.module)
     except KeyboardInterrupt:
         print("\n[STOPPED]")
     except Exception:

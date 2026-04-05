@@ -12,10 +12,11 @@
 - **v8**: Full request compliance restoration. Re-implemented all advanced tool calls (perf, blktrace, ftrace, bpftrace). Upgraded backend to real-time chunked streaming.
 - **v9**: Added SELinux Forensic Audit. Checks for AVC denials, policy status, and correlates auditd overhead with security denials.
 - **v10**: Restored Automated Ranked Root-Cause Summary and HTML Dashboard generation. Final cumulative request-compliant build.
-- **v11 (Current)**: Transformed UI into a **Forensic Command Center**. Added real-time metric parsing, security monitors, and a visual compliance pipeline.
+- **v11**: Transformed UI into a **Forensic Command Center**. Added real-time metric parsing, security monitors, and a visual compliance pipeline.
+- **v12 (Current)**: Implemented **Modular Control**. Every forensic tool in the pipeline is now individually triggerable from the UI. Maintained 100% cumulative feature set.
 
 ## Where we are
-**v11.0.0** is the ultimate, cumulative, request-compliant forensic suite. It features a high-density Command Center UI that visualizes all tool data in real-time while maintaining 100% transparency of all system messages.
+**v12.0.0** is the definitive, modular forensic suite. It allows for both comprehensive full-system probes and surgical, tool-specific audits, all while maintaining absolute transparency and request compliance.
 
 ## What works
 - **100% Request Compliance**: Full file emission, self-healing dependencies (Multi-Distro), TeeLogger captures all stdout/stderr, stack traces everywhere.

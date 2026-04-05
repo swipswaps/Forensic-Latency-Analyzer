@@ -27,10 +27,11 @@ async function startServer() {
   });
 
   app.post("/api/run-probe", (req, res) => {
-    const { advanced, loop } = req.body;
-    const args = ["forensic_latency_probe_v11.py"];
+    const { advanced, loop, module } = req.body;
+    const args = ["forensic_latency_probe_v12.py"];
     if (advanced) args.push("--advanced");
     if (loop) args.push("--loop", loop.toString());
+    if (module) args.push("--module", module);
 
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");

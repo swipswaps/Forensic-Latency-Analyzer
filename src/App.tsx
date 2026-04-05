@@ -125,26 +125,30 @@ export default function App() {
     }
   };
 
-  const runProbe = async () => {
+  const runProbe = async (moduleName?: string) => {
     setIsRunning(true);
     setOutput("");
     setAlerts([]);
-    setMetrics({
-      cpu_pressure: 0,
-      memory_pressure: 0,
-      io_pressure: 0,
-      selinux_mode: "Unknown",
-      selinux_denials: 0,
-      disk_util: 0,
-      core_idle: {}
-    });
-    setModules(MODULE_LIST.reduce((acc, name) => ({ ...acc, [name]: "idle" }), {}));
+    if (!moduleName) {
+      setMetrics({
+        cpu_pressure: 0,
+        memory_pressure: 0,
+        io_pressure: 0,
+        selinux_mode: "Unknown",
+        selinux_denials: 0,
+        disk_util: 0,
+        core_idle: {}
+      });
+      setModules(MODULE_LIST.reduce((acc, name) => ({ ...acc, [name]: "idle" }), {}));
+    } else {
+      setModules(prev => ({ ...prev, [moduleName]: "idle" }));
+    }
 
     try {
       const response = await fetch("/api/run-probe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ advanced, loop }),
+        body: JSON.stringify({ advanced, loop, module: moduleName }),
       });
 
       if (!response.body) return;
@@ -182,7 +186,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-bold text-xl tracking-tight text-white">Forensic Latency Analyzer</h1>
-              <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">v11.0.0-compliant • Command Center</p>
+              <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">v12.0.0-compliant • Modular Control</p>
             </div>
           </div>
 
@@ -213,7 +217,7 @@ export default function App() {
             </div>
 
             <button
-              onClick={runProbe}
+              onClick={() => runProbe()}
               disabled={isRunning}
               className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-bold transition-all ${
                 isRunning 
@@ -296,20 +300,22 @@ export default function App() {
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
             <h3 className="font-bold flex items-center gap-2 mb-4">
               <CheckCircle2 className="w-4 h-4 text-green-400" />
-              Compliance Pipeline
+              Compliance Pipeline (Click to Run)
             </h3>
             <div className="grid grid-cols-3 gap-2">
               {MODULE_LIST.map(name => (
-                <div 
+                <button 
                   key={name}
+                  onClick={() => !isRunning && runProbe(name)}
+                  disabled={isRunning}
                   className={`text-[10px] font-mono p-1.5 rounded border transition-all duration-300 flex items-center justify-center text-center ${
                     modules[name] === "success" ? "bg-green-500/10 border-green-500/30 text-green-400" :
                     modules[name] === "running" ? "bg-blue-500/10 border-blue-500/30 text-blue-400 animate-pulse" :
-                    "bg-slate-800/50 border-slate-700 text-slate-500"
+                    "bg-slate-800/50 border-slate-700 text-slate-500 hover:bg-slate-700/50 hover:border-slate-600"
                   }`}
                 >
                   {name}
-                </div>
+                </button>
               ))}
             </div>
           </div>
