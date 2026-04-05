@@ -1,0 +1,5 @@
+{
+  "name": "Forensic Latency Analyzer",
+  "description": "A full-stack dashboard for troubleshooting resource contention driven latency on Linux systems using native forensic tools.",
+  "requestFramePermissions": []
+}
