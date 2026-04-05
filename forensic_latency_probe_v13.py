@@ -175,7 +175,7 @@ class DependencyManager:
     def ensure_deps():
         print("\n[MODULE:DEPS] VERIFYING SYSTEM DEPENDENCIES")
         
-        # 1. Verify individual tools (Always check - Compliance FIX 2)
+        # 1. Verify individual tools (Always check)
         missing = [t for t in REQUIRED_TOOLS if shutil.which(t) is None]
         if not missing:
             print("[DEPS:SUCCESS] All tools present in PATH.")
@@ -191,7 +191,7 @@ class DependencyManager:
         for attempt in range(3):
             try:
                 if shutil.which("apt-get"):
-                    # DEPS_MARKER only skips apt-get update (Compliance FIX 2)
+                    # DEPS_MARKER only skips apt-get update
                     if not os.path.exists(DEPS_MARKER):
                         run(["sudo", "-n", "apt-get", "update"], timeout=60)
                         with open(DEPS_MARKER, "w") as f: f.write(datetime.datetime.now().isoformat())
@@ -299,7 +299,6 @@ def run(cmd, timeout=30, capture_output=False):
         except subprocess.TimeoutExpired:
             print(f"[TIMEOUT] Command timed out after {timeout}s. Killing process group...")
             try:
-                # Compliance FIX 3: Wrap os.killpg in try...except ProcessLookupError
                 os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             except ProcessLookupError:
                 pass
@@ -353,7 +352,6 @@ def doctor():
     if shutil.which("systemctl"):
         print("[DOCTOR:AUDIT] Checking systemd-oomd status...")
         run(["systemctl", "status", "systemd-oomd", "--no-pager"], timeout=5)
-        # Compliance FIX 8: Add journalctl for systemd-oomd
         run(["journalctl", "-u", "systemd-oomd", "--since", "1 hour ago", "--no-pager"], timeout=15)
     
     if shutil.which("systemctl"):
@@ -426,14 +424,12 @@ def cpu_sched():
             print(f"[METRIC:LOAD_AVG] {match.group(1)}")
 
 def perf_analysis(probe_ts):
-    # Compliance FIX 4: Accept probe_ts, use timestamped data, pass -o and -i
     print("\n[MODULE:PERF] CPU CYCLE AND SCHEDULER TRACING (5s)")
     perf_data = os.path.join(LOG_DIR, f"perf_{probe_ts}.data")
     run(["sudo", "perf", "record", "-o", perf_data, "-a", "-g", "sleep", "5"], timeout=10)
     run(["sudo", "perf", "report", "-i", perf_data, "--stdio", "--max-stack", "10"])
 
 def perf_stat_system():
-    # Compliance FIX 6: New function perf_stat_system
     print("\n[MODULE:PERF_STAT] SYSTEM-WIDE HARDWARE COUNTERS (5s)")
     run(["sudo", "perf", "stat", "-a", "sleep", "5"], timeout=10)
 
@@ -470,7 +466,6 @@ def disk():
                     pass
 
 def block_layer_trace():
-    # Compliance FIX 5: Disk detection using lsblk and awk
     print("\n[MODULE:BLKTRACE] BLOCK LAYER LATENCY TRACE (5s)")
     disk_dev_out = run(["bash", "-c", 'lsblk -no NAME,TYPE | awk \'$2=="disk"{print $1; exit}\''], capture_output=True)
     if disk_dev_out:
@@ -484,7 +479,6 @@ def network():
     print("\n[MODULE:NET] SOCKET AND PROTOCOL AUDIT")
     run(["ss", "-tulnp"])
     run(["ss", "-ti"])
-    # Compliance FIX 9: Add ss -s
     run(["ss", "-s"])
     run(["netstat", "-s"])
     
@@ -523,7 +517,6 @@ def irq_affinity_audit():
     run(["cat", "/proc/interrupts"])
 
 def irq_rate_audit():
-    # Compliance FIX 7: New function irq_rate_audit
     print("\n[MODULE:IRQ_RATE] PER-SECOND INTERRUPT RATES (5s)")
     if shutil.which("sar"):
         run(["sar", "-I", "ALL", "1", "5"], timeout=10)
@@ -606,7 +599,6 @@ def generate_html_report():
         f.write(html_content)
 
 def run_probe(advanced=False, module=None):
-    # Compliance FIX 1: Clear summary between runs
     global SUMMARY_LINES
     SUMMARY_LINES = []
     
@@ -614,7 +606,6 @@ def run_probe(advanced=False, module=None):
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     probe_log = os.path.join(LOG_DIR, f"latency_probe_v13_{probe_ts}.log")
     
-    # Print absolute path of log as FIRST line of output
     print(os.path.abspath(probe_log))
     sys.stdout.flush()
     
@@ -628,7 +619,6 @@ def run_probe(advanced=False, module=None):
             
             enforce_compliance()
             
-            # Compliance FIX 11: Add PERF_STAT and IRQ_RATE to module_map
             module_map = {
                 "DEPS": DependencyManager.ensure_deps,
                 "PSI": psi,
@@ -648,7 +638,7 @@ def run_probe(advanced=False, module=None):
                 "AUDITD": auditd_check,
                 "SELINUX": selinux_audit,
                 "BCC": short_lived_process_trace,
-                "PERF": lambda: perf_analysis(probe_ts), # Compliance FIX 4
+                "PERF": lambda: perf_analysis(probe_ts),
                 "BLKTRACE": block_layer_trace,
                 "BPFTRACE": scheduler_latency_hist,
                 "SUMMARY": rank_root_causes,
@@ -662,7 +652,7 @@ def run_probe(advanced=False, module=None):
                 else:
                     print(f"[ERROR] Unknown module: {module}")
             else:
-                # Full Pipeline (Compliance FIX 12)
+                # Full Pipeline
                 DependencyManager.ensure_deps()
                 doctor()
                 psi()
@@ -709,7 +699,6 @@ if __name__ == "__main__":
     parser.add_argument("--loop", type=int, default=0)
     parser.add_argument("--advanced", action="store_true")
     parser.add_argument("--module", type=str, default=None)
-    # Compliance FIX 13: Remove PROJECT_ROOT and --cwd requirements
     args = parser.parse_args()
     
     try:
