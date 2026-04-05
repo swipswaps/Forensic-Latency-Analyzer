@@ -61,7 +61,7 @@ async function startServer() {
 
   // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "13.2.1" });
+    res.json({ status: "ok", version: "13.2.2" });
   });
 
   app.get("/api/system-metrics", (req, res) => {
@@ -199,19 +199,10 @@ async function startServer() {
     if (loop) args.push("--loop", loop.toString());
     if (module) args.push("--module", module);
 
-    // COMPLIANCE: Explicitly pass current working directory as an argument
-    const projectRoot = process.cwd();
-    args.push("--cwd", projectRoot);
-
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const pythonProcess = spawn("python3", args, {
-      env: { 
-        ...process.env, 
-        PROJECT_ROOT: projectRoot 
-      }
-    });
+    const pythonProcess = spawn("python3", args);
 
     pythonProcess.stdout.on("data", (data) => {
       res.write(data);
