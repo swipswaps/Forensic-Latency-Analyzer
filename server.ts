@@ -28,7 +28,7 @@ async function startServer() {
 
   app.post("/api/run-probe", (req, res) => {
     const { advanced, loop } = req.body;
-    const args = ["forensic_latency_probe_v8.py"];
+    const args = ["forensic_latency_probe_v9.py"];
     if (advanced) args.push("--advanced");
     if (loop) args.push("--loop", loop.toString());
 

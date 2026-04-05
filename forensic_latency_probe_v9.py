@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # =============================================================================
-# forensic_latency_probe_v8.py
+# forensic_latency_probe_v9.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v8.0.0 (NON-EVASIVE CUMULATIVE)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v9.0.0 (SELINUX UPGRADE)
 # =============================================================================
 
 import os
@@ -30,7 +30,8 @@ REQUIRED_TOOLS = [
     "strace", "dmesg", "journalctl", "netstat",
     "uptime", "lsmod", "numastat", "slabtop",
     "auditctl", "perf", "blktrace", "trace-cmd",
-    "bpftrace", "nicstat", "numactl", "iotop"
+    "bpftrace", "nicstat", "numactl", "iotop",
+    "ausearch", "sestatus"
 ]
 
 APT_PACKAGES = [
@@ -38,7 +39,8 @@ APT_PACKAGES = [
     "traceroute", "lsof", "strace",
     "linux-perf", "net-tools", "iotop",
     "blktrace", "trace-cmd", "bpftrace",
-    "nicstat", "numactl", "auditd", "bcc-tools"
+    "nicstat", "numactl", "auditd", "bcc-tools",
+    "policycoreutils", "auditd"
 ]
 
 SUMMARY_LINES = []
@@ -60,7 +62,7 @@ class TeeLogger:
         self.log.flush()
 
 # =============================================================================
-# SELF-ENFORCING COMPLIANCE LOGIC (v8.0.0 STRICTURE)
+# SELF-ENFORCING COMPLIANCE LOGIC (v9.0.0 STRICTURE)
 # =============================================================================
 def enforce_compliance():
     print("[COMPLIANCE ENFORCEMENT] Verifying Cumulative Feature Set...")
@@ -69,12 +71,13 @@ def enforce_compliance():
         "kernel", "cgroup", "core_imbalance_check", 
         "irq_affinity_audit", "short_lived_process_trace",
         "perf_analysis", "block_layer_trace", "kernel_function_trace",
-        "scheduler_latency_hist", "numa_audit", "network_interface_stats"
+        "scheduler_latency_hist", "numa_audit", "network_interface_stats",
+        "selinux_audit"
     ]
     for req in required:
         if req not in globals():
              raise RuntimeError(f"CRITICAL COMPLIANCE FAILURE: Feature {req} missing - brevity removal detected.")
-    print("[COMPLIANCE] v8.0.0 Integrity Verified. No omissions.")
+    print("[COMPLIANCE] v9.0.0 Integrity Verified. No omissions.")
 
 # =============================================================================
 # CORE EXECUTION WRAPPER
@@ -103,7 +106,7 @@ def run(cmd, timeout=30, capture_output=False):
         return None
 
 # =============================================================================
-# FORENSIC MODULES (v8.0.0 RESTORED)
+# FORENSIC MODULES (v9.0.0 RESTORED)
 # =============================================================================
 
 def ensure_deps():
@@ -157,7 +160,6 @@ def disk():
 
 def block_layer_trace():
     print("\n[BLKTRACE] BLOCK LAYER LATENCY TRACE (5s)")
-    # Auto-detect primary disk
     disk_dev = run(["bash", "-c", "lsblk -no NAME | head -n 1"], capture_output=True)
     if disk_dev:
         run(["sudo", "blktrace", "-d", f"/dev/{disk_dev.strip()}", "-w", "5"], timeout=10)
@@ -209,16 +211,24 @@ def scheduler_latency_hist():
     if shutil.which("bpftrace"):
         run(["sudo", "bpftrace", "-e", "sched:sched_wakeup { @start[args->pid] = nsecs; } sched:sched_switch { if (@start[prev_pid]) { @latency = hist(nsecs - @start[prev_pid]); delete(@start[prev_pid]); } } interval:s:5 { exit(); }"], timeout=10)
 
+def selinux_audit():
+    print("\n[SELINUX] SECURITY POLICY AND AVC DENIAL AUDIT")
+    if shutil.which("sestatus"):
+        run(["sestatus"])
+    if shutil.which("ausearch"):
+        print("[ACTION] Searching for recent AVC denials...")
+        run(["sudo", "ausearch", "-m", "AVC", "-ts", "recent"], timeout=20)
+
 def run_probe(advanced=False):
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    probe_log = os.path.join(LOG_DIR, f"latency_probe_v8_{probe_ts}.log")
+    probe_log = os.path.join(LOG_DIR, f"latency_probe_v9_{probe_ts}.log")
     sys.stdout = TeeLogger(probe_log)
     sys.stderr = TeeLogger(probe_log)
     
     enforce_compliance()
     ensure_deps()
     
-    # Cumulative Forensic Pipeline (v8.0.0)
+    # Cumulative Forensic Pipeline (v9.0.0)
     psi()
     core_imbalance_check()
     cpu_sched()
@@ -231,6 +241,7 @@ def run_probe(advanced=False):
     cgroup()
     irq_affinity_audit()
     auditd_check()
+    selinux_audit()
     short_lived_process_trace()
     
     if advanced:
