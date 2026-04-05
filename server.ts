@@ -61,7 +61,7 @@ async function startServer() {
 
   // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "13.2.2" });
+    res.json({ status: "ok", version: "13.2.3" });
   });
 
   app.get("/api/system-metrics", (req, res) => {
