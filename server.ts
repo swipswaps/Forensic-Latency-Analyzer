@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import fs from "fs";
 import cors from "cors";
-import sqlite3 from "sqlite3";
+import Database from "better-sqlite3";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +24,7 @@ async function startServer() {
     fs.mkdirSync(LOG_DIR);
   }
 
-  const db = new sqlite3.Database(DB_FILE);
+  const db = new Database(DB_FILE);
 
   // API Routes
   app.get("/api/health", (req, res) => {
@@ -58,24 +58,30 @@ async function startServer() {
 
   // Database Endpoints
   app.get("/api/db/runs", (req, res) => {
-    db.all("SELECT * FROM runs ORDER BY id DESC LIMIT 50", (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+    try {
+      const rows = db.prepare("SELECT * FROM runs ORDER BY id DESC LIMIT 50").all();
       res.json(rows);
-    });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/db/metrics/:runId", (req, res) => {
-    db.all("SELECT * FROM metrics WHERE run_id = ?", [req.params.runId], (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+    try {
+      const rows = db.prepare("SELECT * FROM metrics WHERE run_id = ?").all(req.params.runId);
       res.json(rows);
-    });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/db/alerts/:runId", (req, res) => {
-    db.all("SELECT * FROM alerts WHERE run_id = ?", [req.params.runId], (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+    try {
+      const rows = db.prepare("SELECT * FROM alerts WHERE run_id = ?").all(req.params.runId);
       res.json(rows);
-    });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/logs", (req, res) => {
