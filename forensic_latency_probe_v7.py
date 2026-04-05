@@ -2,7 +2,7 @@
 # =============================================================================
 # forensic_latency_probe_v7.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v7 (CUMULATIVE - NO OMISSIONS)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v7.1 (MULTI-DISTRO UPGRADE)
 # =============================================================================
 
 import os
@@ -107,8 +107,15 @@ def ensure_deps():
     missing = [t for t in REQUIRED_TOOLS if shutil.which(t) is None]
     if missing:
         print(f"[ACTION] Installing missing tools: {missing}")
-        run(["sudo", "-n", "apt-get", "update"], timeout=60)
-        run(["sudo", "-n", "apt-get", "install", "-y"] + APT_PACKAGES, timeout=120)
+        if shutil.which("apt-get"):
+            run(["sudo", "-n", "apt-get", "update"], timeout=60)
+            run(["sudo", "-n", "apt-get", "install", "-y"] + APT_PACKAGES, timeout=120)
+        elif shutil.which("dnf"):
+            # Map APT packages to DNF equivalents if necessary
+            DNF_PACKAGES = [p.replace("sysstat", "sysstat").replace("iproute2", "iproute").replace("net-tools", "net-tools") for p in APT_PACKAGES]
+            run(["sudo", "-n", "dnf", "install", "-y"] + DNF_PACKAGES, timeout=120)
+        else:
+            print("[WARNING] No supported package manager (APT/DNF) found. Manual install required.")
 
 def psi():
     print("\n[PSI] PRESSURE STALL INFORMATION")

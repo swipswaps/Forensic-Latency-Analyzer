@@ -5,15 +5,19 @@
 - **v1**: Emitted exactly as specified: full file, TeeLogger for stdout+stderr, self-healing APT dependency installer, top-level + per-command stack traces, Kali-native tools only.
 - **v2**: Closed all 10 audit gaps identified from real-world contention (Firefox multi-process): PSI, scheduler latency, context switches, kernel logs, interrupts/softirqs, network deep stats, cgroup detection, disk block-layer attribution, per-process deep dive, timeline correlation.
 - **v3**: Applied 8 numbered upgrades including daemon mode, automatic perf report, automated ranked root-cause summary, non-interactive sudo handling, advanced invasive mode (blktrace/ftrace), and HTML dashboard generation.
-- **v4 (Current)**: Added self-enforcing compliance logic (runtime verification of every feature) to prevent any future omission or "brevity" removal. Daemon mode now uses per-run logs.
+- **v4**: Added self-enforcing compliance logic (runtime verification of every feature) to prevent any future omission or "brevity" removal. Daemon mode now uses per-run logs.
+- **v5**: Removed all AI branding and dependencies. Upgraded to dynamic analysis (PSI/Uptime parsing) and added hardware transparency (numastat, slabtop).
+- **v6**: Added "Hidden Load" detection (execsnoop, IRQ affinity) to diagnose 100% core saturation with no visible PID.
+- **v7 (Current)**: Cumulative restoration of all features. Re-integrated PSI, scheduler, memory, disk, network, and kernel modules with v6 upgrades. Added Multi-Distro (APT/DNF) support.
 
 ## Where we are
-**v4** is the final, request-compliant, single-file forensic probe integrated into a full-stack React/Express application. It self-enforces every requirement at startup.
+**v7** is the final, cumulative, request-compliant, single-file forensic probe integrated into a full-stack React/Express application. It self-enforces every requirement at startup and includes "Hidden Load" detection for single-core saturation.
 
 ## What works
-- **100% Request Compliance**: Full file emission, self-healing dependencies, TeeLogger captures all stdout/stderr, stack traces everywhere.
+- **100% Request Compliance**: Full file emission, self-healing dependencies (Multi-Distro), TeeLogger captures all stdout/stderr, stack traces everywhere.
 - **Self-Enforcement Logic**: Guarantees no features can be removed or omitted by future edits.
 - **Forensic Signals**: PSI (cpu/memory/io), scheduler latency, context switches, kernel logs, interrupts, network deep stats, cgroup throttling, per-process tracing.
+- **Hidden Load Detection**: Core imbalance audit, IRQ affinity mapping, and `execsnoop` for transient processes.
 - **Full-Stack Integration**: A React dashboard to trigger probes, view live logs, and read the automated ranked root-cause summary.
 
 ## What needs work
