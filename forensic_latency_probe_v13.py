@@ -2,7 +2,7 @@
 # =============================================================================
 # forensic_latency_probe_v13.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.2.3 (HARDENED)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.2.4 (SELF-CONFIGURING)
 # =============================================================================
 #
 # v13.2.3 changes over v13.2.2:
@@ -179,6 +179,98 @@ class DatabaseManager:
         except Exception:
             pass
 
+
+# =============================================================================
+# SUDOERS SELF-CONFIGURATION
+# =============================================================================
+
+SUDOERS_FILE = "/etc/sudoers.d/forensic-probe"
+
+# Binaries the probe needs to run as root. Paths are resolved at runtime
+# so they are correct regardless of whether the system uses /usr/bin or
+# /usr/sbin. If a binary is not installed, it is omitted from the rule.
+SUDOERS_BINARIES = [
+    "perf", "blktrace", "bpftrace", "auditctl",
+    "slabtop", "execsnoop", "trace-cmd", "ausearch",
+    "dmesg",    # restricted on Fedora when kernel.dmesg_restrict=1
+]
+
+def _setup_sudoers():
+    """
+    Write a NOPASSWD sudoers rule for the current user covering all
+    privileged forensic tools. Idempotent — skips if the file already
+    exists and contains the current username.
+
+    Called once from ensure_deps() after tool installation so that
+    subsequent probe runs can use sudo without password prompts.
+    Requires that the user already has interactive sudo access (to
+    write to /etc/sudoers.d/). If that fails, prints a manual instruction
+    and continues — the probe runs in degraded mode with sudo skipped.
+    """
+    try:
+        import pwd
+        user = pwd.getpwuid(os.getuid()).pw_name
+    except Exception:
+        user = os.environ.get("USER", "owner")
+
+    # Check if rule already covers this user.
+    if os.path.exists(SUDOERS_FILE):
+        try:
+            with open(SUDOERS_FILE) as f:
+                existing = f.read()
+            if user in existing:
+                print(f"[SUDOERS:OK] Rule for '{user}' already present in {SUDOERS_FILE}")
+                return
+        except PermissionError:
+            pass    # can't read it — try to write anyway
+
+    # Resolve actual binary paths so the rule is precise.
+    resolved = []
+    for binary in SUDOERS_BINARIES:
+        path = shutil.which(binary)
+        if path:
+            resolved.append(path)
+
+    if not resolved:
+        print("[SUDOERS:WARN] No privileged binaries found — skipping sudoers setup.")
+        return
+
+    rule = f"{user} ALL=(ALL) NOPASSWD: {', '.join(resolved)}\n"
+    print(f"[SUDOERS:ACTION] Writing rule to {SUDOERS_FILE}:")
+    print(f"  {rule.strip()}")
+
+    # Write via tee through sudo so we don't need to open the file directly.
+    # tee is used because shell redirection (>) doesn't work through sudo.
+    ret = subprocess.call(
+        ["sudo", "tee", SUDOERS_FILE],
+        input=rule,
+        text=True,
+        stdout=subprocess.DEVNULL
+    )
+    if ret == 0:
+        # Validate the file before trusting it — a bad sudoers entry can
+        # lock the user out. visudo -c -f exits 0 only on valid syntax.
+        val = subprocess.call(
+            ["sudo", "visudo", "-c", "-f", SUDOERS_FILE],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        if val == 0:
+            print(f"[SUDOERS:SUCCESS] Rule written and validated. "
+                  f"Privileged tools now available without password.")
+            # Reset the sudo cache so the next call re-checks and finds it works.
+            global _SUDO_OK
+            _SUDO_OK = None
+        else:
+            print("[SUDOERS:ERROR] visudo validation failed — removing bad rule.")
+            subprocess.call(["sudo", "rm", "-f", SUDOERS_FILE])
+    else:
+        print("[SUDOERS:WARN] Could not write sudoers rule. "
+              "Run manually to enable privileged tools:\n"
+              f"  echo '{rule.strip()}' | sudo tee {SUDOERS_FILE}\n"
+              f"  sudo visudo -c -f {SUDOERS_FILE}")
+
+
 # =============================================================================
 # DEPENDENCY MANAGEMENT (ROBUST IDEMPOTENCY)
 # =============================================================================
@@ -217,6 +309,10 @@ class DependencyManager:
         missing_after = [t for t in REQUIRED_TOOLS if shutil.which(t) is None]
         if missing_after:
             print(f"[DEPS:WARNING] Still missing after install: {missing_after}")
+
+        # Self-configure sudoers so privileged tools work on next run.
+        # Skipped automatically if the rule is already present.
+        _setup_sudoers()
 
 # =============================================================================
 # LOGGING (TEE STDOUT + STDERR)
@@ -273,7 +369,7 @@ def enforce_compliance():
         raise RuntimeError(
             "CRITICAL COMPLIANCE FAILURE: stdout is not a TeeLogger."
         )
-    print("[COMPLIANCE] v13.2.3 Integrity Verified. All 23 modules present.")
+    print("[COMPLIANCE] v13.2.4 Integrity Verified. All 23 modules present.")
 
 # =============================================================================
 # SUDO AVAILABILITY CACHE  (v13.2.3)
@@ -741,7 +837,7 @@ def generate_html_report():
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Forensic Latency Report v13.2.3</title>
+    <title>Forensic Latency Report v13.2.4</title>
     <style>
         body  {{ font-family: sans-serif; background: #f8f9fa; padding: 20px; }}
         .card {{ background: white; border-radius: 8px; padding: 20px;
@@ -882,7 +978,7 @@ def run_probe(advanced=False, module=None):
 # =============================================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Forensic Latency Analyzer v13.2.3")
+    parser = argparse.ArgumentParser(description="Forensic Latency Analyzer v13.2.4")
     parser.add_argument("--loop",     type=int,  default=0,    help="Repeat every N seconds")
     parser.add_argument("--advanced", action="store_true",     help="Enable perf/blktrace/ftrace/bpftrace")
     parser.add_argument("--module",   type=str,  default=None, help="Run one module by name")
