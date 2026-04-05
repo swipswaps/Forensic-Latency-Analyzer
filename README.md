@@ -8,10 +8,11 @@
 - **v4**: Added self-enforcing compliance logic (runtime verification of every feature) to prevent any future omission or "brevity" removal. Daemon mode now uses per-run logs.
 - **v5**: Removed all AI branding and dependencies. Upgraded to dynamic analysis (PSI/Uptime parsing) and added hardware transparency (numastat, slabtop).
 - **v6**: Added "Hidden Load" detection (execsnoop, IRQ affinity) to diagnose 100% core saturation with no visible PID.
-- **v7 (Current)**: Cumulative restoration of all features. Re-integrated PSI, scheduler, memory, disk, network, and kernel modules with v6 upgrades. Added Multi-Distro (APT/DNF) support.
+- **v7**: Cumulative restoration of all features. Re-integrated PSI, scheduler, memory, disk, network, and kernel modules with v6 upgrades. Added Multi-Distro (APT/DNF) support.
+- **v8 (Current)**: Full request compliance restoration. Re-implemented all advanced tool calls (perf, blktrace, ftrace, bpftrace). Upgraded backend to real-time chunked streaming.
 
 ## Where we are
-**v7** is the final, cumulative, request-compliant, single-file forensic probe integrated into a full-stack React/Express application. It self-enforces every requirement at startup and includes "Hidden Load" detection for single-core saturation.
+**v8.0.0** is the final, cumulative, request-compliant, single-file forensic probe integrated into a full-stack React/Express application. It self-enforces every requirement at startup and streams all tool output in real-time.
 
 ## What works
 - **100% Request Compliance**: Full file emission, self-healing dependencies (Multi-Distro), TeeLogger captures all stdout/stderr, stack traces everywhere.

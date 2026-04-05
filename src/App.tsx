@@ -35,13 +35,19 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ advanced: advancedMode }),
       });
-      const data = await res.json();
-      setLastProbeOutput(data.output);
-      if (data.code === 0) {
-        setStatus('success');
-      } else {
-        setStatus('error');
+      
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No reader available');
+
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        setLastProbeOutput(prev => prev + chunk);
       }
+      
+      setStatus('success');
       fetchLogs();
     } catch (err) {
       setStatus('error');
@@ -73,7 +79,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-bold text-xl tracking-tight">Forensic Latency Analyzer</h1>
-              <p className="text-xs text-slate-500 font-mono">v7.1.0-compliant</p>
+              <p className="text-xs text-slate-500 font-mono">v8.0.0-compliant</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
