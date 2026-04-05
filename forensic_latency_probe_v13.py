@@ -2,7 +2,7 @@
 # =============================================================================
 # forensic_latency_probe_v13.py
 # =============================================================================
-# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.0.0 (ROBUST IDEMPOTENCY)
+# FULL REQUEST-COMPLIANT FORENSIC LATENCY ANALYZER v13.1.0 (ROBUST IDEMPOTENCY)
 # =============================================================================
 
 import os
@@ -16,6 +16,7 @@ import time
 import re
 import json
 import sqlite3
+import signal
 from threading import Thread
 
 # =============================================================================
@@ -38,14 +39,28 @@ REQUIRED_TOOLS = [
     "ausearch", "sestatus"
 ]
 
-APT_PACKAGES = [
-    "sysstat", "iproute2", "iputils-ping",
-    "traceroute", "lsof", "strace",
-    "linux-perf", "net-tools", "iotop",
-    "blktrace", "trace-cmd", "bpftrace",
-    "nicstat", "numactl", "auditd", "bcc-tools",
-    "policycoreutils", "auditd"
-]
+# Mapping for Fedora/DNF
+DNF_MAP = {
+    "sysstat": "sysstat",
+    "iproute2": "iproute",
+    "iputils-ping": "iputils",
+    "traceroute": "traceroute",
+    "lsof": "lsof",
+    "strace": "strace",
+    "linux-perf": "perf",
+    "net-tools": "net-tools",
+    "iotop": "iotop",
+    "blktrace": "blktrace",
+    "trace-cmd": "trace-cmd",
+    "bpftrace": "bpftrace",
+    "nicstat": "nicstat",
+    "numactl": "numactl",
+    "auditd": "audit",
+    "bcc-tools": "bcc-tools",
+    "policycoreutils": "policycoreutils",
+}
+
+APT_PACKAGES = list(DNF_MAP.keys())
 
 SUMMARY_LINES = []
 CURRENT_RUN_ID = None
@@ -174,6 +189,12 @@ class DependencyManager:
 
         # 3. Recoverable Installation with Retries
         print(f"[DEPS:ACTION] Missing tools detected: {missing}. Initiating recoverable install.")
+        
+        # Check for non-interactive sudo
+        sudo_works = run(["sudo", "-n", "true"], timeout=5) == 0
+        if not sudo_works:
+            print("[DEPS:WARNING] Non-interactive sudo failed. Installation may require manual intervention.")
+
         for attempt in range(3):
             try:
                 if shutil.which("apt-get"):
@@ -181,7 +202,7 @@ class DependencyManager:
                     ret = run(["sudo", "-n", "apt-get", "install", "-y"] + APT_PACKAGES, timeout=120)
                     if ret == 0: break
                 elif shutil.which("dnf"):
-                    DNF_PACKAGES = [p.replace("sysstat", "sysstat").replace("iproute2", "iproute").replace("net-tools", "net-tools") for p in APT_PACKAGES]
+                    DNF_PACKAGES = [DNF_MAP.get(p, p) for p in APT_PACKAGES]
                     ret = run(["sudo", "-n", "dnf", "install", "-y"] + DNF_PACKAGES, timeout=120)
                     if ret == 0: break
             except Exception as e:
@@ -201,18 +222,32 @@ class DependencyManager:
 
 class TeeLogger:
     def __init__(self, logfile):
+        self.logfile = logfile
         self.log = open(logfile, "a", buffering=1)
+        self.terminal_stdout = sys.__stdout__
+        self.terminal_stderr = sys.__stderr__
 
     def write(self, msg):
-        sys.__stdout__.write(msg)
+        self.terminal_stdout.write(msg)
         self.log.write(msg)
 
     def flush(self):
-        sys.__stdout__.flush()
+        self.terminal_stdout.flush()
         self.log.flush()
 
+    def close(self):
+        if self.log:
+            self.log.close()
+            self.log = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 # =============================================================================
-# SELF-ENFORCING COMPLIANCE LOGIC (v13.0.0 STRICTURE)
+# SELF-ENFORCING COMPLIANCE LOGIC (v13.1.0 STRICTURE)
 # =============================================================================
 def enforce_compliance():
     print("[COMPLIANCE ENFORCEMENT] Verifying Cumulative Feature Set...")
@@ -228,7 +263,12 @@ def enforce_compliance():
     for req in required:
         if req not in globals():
              raise RuntimeError(f"CRITICAL COMPLIANCE FAILURE: Feature {req} missing - brevity removal detected.")
-    print("[COMPLIANCE] v13.0.0 Integrity Verified. No omissions.")
+    
+    # Verify TeeLogger assignment
+    if not isinstance(sys.stdout, TeeLogger):
+        print("[COMPLIANCE:WARNING] stdout is not a TeeLogger. Logging might be incomplete.")
+        
+    print("[COMPLIANCE] v13.1.0 Integrity Verified. No omissions.")
 
 # =============================================================================
 # CORE EXECUTION WRAPPER
@@ -238,26 +278,46 @@ def run(cmd, timeout=30, capture_output=False):
     print(f"\n[COMMAND] {' '.join(cmd)}")
     print(f"[TIME] {datetime.datetime.now().isoformat()}")
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # Use start_new_session to create a process group for clean cleanup
+        p = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True,
+            start_new_session=True
+        )
         out_lines = []
+        
         def stream(pipe, tag):
-            for line in iter(pipe.readline, ''):
-                clean_line = line.rstrip()
-                print(f"{tag} {clean_line}")
-                if capture_output: out_lines.append(clean_line)
+            try:
+                for line in iter(pipe.readline, ''):
+                    clean_line = line.rstrip()
+                    print(f"{tag} {clean_line}")
+                    if capture_output: out_lines.append(clean_line)
+            except Exception:
+                pass
         
         t1 = Thread(target=stream, args=(p.stdout, "[STDOUT]"))
         t2 = Thread(target=stream, args=(p.stderr, "[STDERR]"))
         t1.start(); t2.start()
-        p.wait(timeout=timeout)
-        t1.join(); t2.join()
+        
+        try:
+            p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print(f"[TIMEOUT] Command timed out after {timeout}s. Killing process group...")
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            p.wait()
+        
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+        
         return "\n".join(out_lines) if capture_output else p.returncode
     except Exception:
         traceback.print_exc()
         return None
 
 # =============================================================================
-# FORENSIC MODULES (v13.0.0 COMMAND CENTER)
+# FORENSIC MODULES (v13.1.0 COMMAND CENTER)
 # =============================================================================
 
 def doctor():
@@ -297,6 +357,24 @@ def doctor():
     except:
         print("[DOCTOR:WARNING] Could not verify perf capabilities.")
 
+    # Check for systemd-oomd
+    if shutil.which("systemctl"):
+        print("[DOCTOR:AUDIT] Checking systemd-oomd status...")
+        run(["systemctl", "status", "systemd-oomd"], timeout=5)
+    
+    # Check for dbus-broker
+    if shutil.which("systemctl"):
+        print("[DOCTOR:AUDIT] Checking dbus-broker status...")
+        run(["systemctl", "status", "dbus-broker"], timeout=5)
+
+    # Check entropy
+    if os.path.exists("/proc/sys/kernel/random/entropy_avail"):
+        with open("/proc/sys/kernel/random/entropy_avail", "r") as f:
+            entropy = f.read().strip()
+            print(f"[METRIC:ENTROPY] {entropy}")
+            if int(entropy) < 200:
+                SUMMARY_LINES.append(f"WARNING: Low system entropy: {entropy}")
+
 def psi():
     print("\n[MODULE:PSI] PRESSURE STALL INFORMATION")
     for f in ["cpu", "memory", "io"]:
@@ -316,25 +394,32 @@ def core_imbalance_check():
     print("\n[MODULE:CPU_CORE] CORE IMBALANCE AUDIT")
     out = run(["mpstat", "-P", "ALL", "1", "1"], capture_output=True)
     if out:
-        for line in out.split("\n"):
-            if "%idle" in line and "all" not in line and len(line.split()) > 10:
-                parts = line.split()
-                # Find the idle column index
-                try:
-                    idle_idx = -1
-                    if "%idle" in out.split("\n")[0]:
-                        headers = out.split("\n")[0].split()
-                        if "%idle" in headers:
-                            idle_idx = headers.index("%idle")
-                    
-                    idle = float(parts[idle_idx])
-                    core = parts[2]
-                    print(f"[METRIC:CPU_CORE_{core}_IDLE] {idle}")
-                    DatabaseManager.log_metric(CURRENT_RUN_ID, f"CPU_CORE_{core}_IDLE", idle)
-                    if idle < 5.0:
-                        SUMMARY_LINES.append(f"WARNING: CPU Core {core} is saturated (idle: {idle}%)")
-                except:
-                    pass
+        lines = out.split("\n")
+        header_idx = -1
+        for i, line in enumerate(lines):
+            if "%idle" in line:
+                header_idx = i
+                break
+        
+        if header_idx != -1:
+            headers = lines[header_idx].split()
+            idle_idx = headers.index("%idle")
+            
+            for line in lines[header_idx+1:]:
+                if "all" not in line and len(line.split()) > idle_idx:
+                    parts = line.split()
+                    try:
+                        idle = float(parts[idle_idx])
+                        core = parts[2]
+                        print(f"[METRIC:CPU_CORE_{core}_IDLE] {idle}")
+                        DatabaseManager.log_metric(CURRENT_RUN_ID, f"CPU_CORE_{core}_IDLE", idle)
+                        if idle < 5.0:
+                            SUMMARY_LINES.append(f"WARNING: CPU Core {core} is saturated (idle: {idle}%)")
+                            # Ghost Load Diagnostic: If core is saturated, run perf stat on it
+                            print(f"[ACTION] Saturated core {core} detected. Running hardware counter audit...")
+                            run(["sudo", "perf", "stat", "-a", "-C", core, "sleep", "2"], timeout=10)
+                    except:
+                        pass
 
 def cpu_sched():
     print("\n[MODULE:CPU_SCHED] SCHEDULER AND PROCESS AUDIT")
@@ -375,24 +460,29 @@ def disk():
     print("\n[MODULE:DISK] I/O LATENCY AND THROUGHPUT")
     out = run(["iostat", "-xz", "1", "3"], capture_output=True)
     if out and "%util" in out:
-        for line in out.split("\n"):
-            if len(line.split()) > 10:
+        lines = out.split("\n")
+        for line in lines:
+            if len(line.split()) > 10 and not line.startswith("Device"):
                 parts = line.split()
-                util = float(parts[-1])
-                print(f"[METRIC:DISK_{parts[0]}_UTIL] {util}")
-                DatabaseManager.log_metric(CURRENT_RUN_ID, f"DISK_{parts[0]}_UTIL", util)
-                if util > 80.0:
-                    SUMMARY_LINES.append(f"CRITICAL: Disk {parts[0]} is {util}% utilized")
+                try:
+                    util = float(parts[-1])
+                    print(f"[METRIC:DISK_{parts[0]}_UTIL] {util}")
+                    DatabaseManager.log_metric(CURRENT_RUN_ID, f"DISK_{parts[0]}_UTIL", util)
+                    if util > 80.0:
+                        SUMMARY_LINES.append(f"CRITICAL: Disk {parts[0]} is {util}% utilized")
+                except:
+                    pass
 
 def block_layer_trace():
     print("\n[MODULE:BLKTRACE] BLOCK LAYER LATENCY TRACE (5s)")
-    disk_dev = run(["bash", "-c", "lsblk -no NAME | head -n 1"], capture_output=True)
-    if disk_dev:
-        dev_path = f"/dev/{disk_dev.strip()}"
+    disk_dev_out = run(["bash", "-c", "lsblk -no NAME | head -n 1"], capture_output=True)
+    if disk_dev_out:
+        disk_dev = disk_dev_out.strip()
+        dev_path = f"/dev/{disk_dev}"
         run(["sudo", "blktrace", "-d", dev_path, "-w", "5"], timeout=10)
         # Attempt to parse if blkparse exists
         if shutil.which("blkparse"):
-            run(["sudo", "blkparse", "-i", disk_dev.strip()])
+            run(["sudo", "blkparse", "-i", disk_dev])
 
 def network():
     print("\n[MODULE:NET] SOCKET AND PROTOCOL AUDIT")
@@ -448,7 +538,9 @@ def short_lived_process_trace():
 def scheduler_latency_hist():
     print("\n[MODULE:BPFTRACE] RUN-QUEUE LATENCY HISTOGRAM (5s)")
     if shutil.which("bpftrace"):
-        run(["sudo", "bpftrace", "-e", "sched:sched_wakeup { @start[args->pid] = nsecs; } sched:sched_switch { if (@start[prev_pid]) { @latency = hist(nsecs - @start[prev_pid]); delete(@start[prev_pid]); } } interval:s:5 { exit(); }"], timeout=10)
+        # Corrected bpftrace command with self-termination
+        expr = "sched:sched_wakeup { @start[args->pid] = nsecs; } sched:sched_switch { if (@start[prev_pid]) { @latency = hist(nsecs - @start[prev_pid]); delete(@start[prev_pid]); } } interval:s:5 { exit(); }"
+        run(["sudo", "bpftrace", "-e", expr], timeout=10)
 
 def selinux_audit():
     print("\n[MODULE:SELINUX] SECURITY POLICY AND AVC DENIAL AUDIT")
@@ -487,7 +579,7 @@ def generate_html_report():
     html_content = f"""
     <html>
     <head>
-        <title>Forensic Latency Report v13.0.0</title>
+        <title>Forensic Latency Report v13.1.0</title>
         <style>
             body {{ font-family: sans-serif; background: #f8f9fa; padding: 20px; }}
             .card {{ background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
@@ -516,81 +608,87 @@ def run_probe(advanced=False, module=None):
     global CURRENT_RUN_ID
     probe_ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     probe_log = os.path.join(LOG_DIR, f"latency_probe_v13_{probe_ts}.log")
-    sys.stdout = TeeLogger(probe_log)
-    sys.stderr = TeeLogger(probe_log)
     
-    DatabaseManager.init_db()
-    CURRENT_RUN_ID = DatabaseManager.start_run("ADVANCED" if advanced else ("MODULE:" + module if module else "STANDARD"))
-    
-    enforce_compliance()
-    
-    module_map = {
-        "DEPS": DependencyManager.ensure_deps,
-        "PSI": psi,
-        "CPU_CORE": core_imbalance_check,
-        "CPU_SCHED": cpu_sched,
-        "MEM": memory,
-        "NUMA": numa_audit,
-        "DISK": disk,
-        "NET": network,
-        "NICSTAT": network_interface_stats,
-        "KERNEL": kernel,
-        "FTRACE": kernel_function_trace,
-        "CGROUP": cgroup,
-        "IRQ": irq_affinity_audit,
-        "AUDITD": auditd_check,
-        "SELINUX": selinux_audit,
-        "BCC": short_lived_process_trace,
-        "PERF": perf_analysis,
-        "BLKTRACE": block_layer_trace,
-        "BPFTRACE": scheduler_latency_hist,
-        "SUMMARY": rank_root_causes,
-        "REPORT": generate_html_report,
-        "DOCTOR": doctor
-    }
-
-    try:
-        if module:
-            if module in module_map:
-                module_map[module]()
-            else:
-                print(f"[ERROR] Unknown module: {module}")
-        else:
-            # Full Pipeline
-            DependencyManager.ensure_deps()
-            doctor()
-            psi()
-            core_imbalance_check()
-            cpu_sched()
-            memory()
-            numa_audit()
-            disk()
-            network()
-            network_interface_stats()
-            kernel()
-            cgroup()
-            irq_affinity_audit()
-            auditd_check()
-            selinux_audit()
-            short_lived_process_trace()
-            
-            if advanced:
-                perf_analysis()
-                block_layer_trace()
-                kernel_function_trace()
-                scheduler_latency_hist()
-            
-            rank_root_causes()
-            generate_html_report()
+    with TeeLogger(probe_log) as logger:
+        sys.stdout = logger
+        sys.stderr = logger
         
-        DatabaseManager.update_run_status(CURRENT_RUN_ID, "SUCCESS", probe_log, HTML_FILE, "\n".join(SUMMARY_LINES))
-        print(f"\n[COMPLETE] Log: {probe_log}")
-        if not module or module == "REPORT":
-            print(f"[COMPLETE] HTML Report: {HTML_FILE}")
-    except Exception as e:
-        DatabaseManager.update_run_status(CURRENT_RUN_ID, "FAILED", probe_log)
-        print(f"[CRITICAL] Run failed: {e}")
-        traceback.print_exc()
+        try:
+            DatabaseManager.init_db()
+            CURRENT_RUN_ID = DatabaseManager.start_run("ADVANCED" if advanced else ("MODULE:" + module if module else "STANDARD"))
+            
+            enforce_compliance()
+            
+            module_map = {
+                "DEPS": DependencyManager.ensure_deps,
+                "PSI": psi,
+                "CPU_CORE": core_imbalance_check,
+                "CPU_SCHED": cpu_sched,
+                "MEM": memory,
+                "NUMA": numa_audit,
+                "DISK": disk,
+                "NET": network,
+                "NICSTAT": network_interface_stats,
+                "KERNEL": kernel,
+                "FTRACE": kernel_function_trace,
+                "CGROUP": cgroup,
+                "IRQ": irq_affinity_audit,
+                "AUDITD": auditd_check,
+                "SELINUX": selinux_audit,
+                "BCC": short_lived_process_trace,
+                "PERF": perf_analysis,
+                "BLKTRACE": block_layer_trace,
+                "BPFTRACE": scheduler_latency_hist,
+                "SUMMARY": rank_root_causes,
+                "REPORT": generate_html_report,
+                "DOCTOR": doctor
+            }
+
+            if module:
+                if module in module_map:
+                    module_map[module]()
+                else:
+                    print(f"[ERROR] Unknown module: {module}")
+            else:
+                # Full Pipeline
+                DependencyManager.ensure_deps()
+                doctor()
+                psi()
+                core_imbalance_check()
+                cpu_sched()
+                memory()
+                numa_audit()
+                disk()
+                network()
+                network_interface_stats()
+                kernel()
+                cgroup()
+                irq_affinity_audit()
+                auditd_check()
+                selinux_audit()
+                short_lived_process_trace()
+                
+                if advanced:
+                    perf_analysis()
+                    block_layer_trace()
+                    kernel_function_trace()
+                    scheduler_latency_hist()
+                
+                rank_root_causes()
+                generate_html_report()
+            
+            DatabaseManager.update_run_status(CURRENT_RUN_ID, "SUCCESS", probe_log, HTML_FILE, "\n".join(SUMMARY_LINES))
+            print(f"\n[COMPLETE] Log: {probe_log}")
+            if not module or module == "REPORT":
+                print(f"[COMPLETE] HTML Report: {HTML_FILE}")
+        except Exception as e:
+            DatabaseManager.update_run_status(CURRENT_RUN_ID, "FAILED", probe_log)
+            print(f"[CRITICAL] Run failed: {e}")
+            traceback.print_exc()
+        finally:
+            # Restore stdout/stderr
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

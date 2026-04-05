@@ -61,7 +61,7 @@ async function startServer() {
 
   // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "13.0.0" });
+    res.json({ status: "ok", version: "13.1.0" });
   });
 
   app.get("/api/system-metrics", (req, res) => {
@@ -115,7 +115,7 @@ async function startServer() {
   });
 
   app.get("/api/doctor", async (req, res) => {
-    const tools = ["python3", "perf", "bpftrace", "ss", "netstat", "blktrace", "bcc", "auditd"];
+    const tools = ["python3", "perf", "bpftrace", "ss", "netstat", "blktrace", "bcc", "auditd", "trace-cmd", "nicstat", "numactl"];
     const results: any = {};
     for (const tool of tools) {
       try {
@@ -140,6 +140,28 @@ async function startServer() {
         res.status(500).json({ error: err.message });
       }
     }
+  });
+
+  app.get("/api/system-diagnostics", async (req, res) => {
+    const diagnostics: any = {};
+    try {
+      const { stdout: oomd } = await execAsync("systemctl is-active systemd-oomd || echo 'inactive'");
+      diagnostics.oomd = oomd.trim();
+      
+      const { stdout: dbus } = await execAsync("systemctl is-active dbus-broker || echo 'inactive'");
+      diagnostics.dbus = dbus.trim();
+
+      if (fs.existsSync("/proc/sys/kernel/random/entropy_avail")) {
+        diagnostics.entropy = fs.readFileSync("/proc/sys/kernel/random/entropy_avail", "utf8").trim();
+      }
+
+      const { stdout: interrupts } = await execAsync("cat /proc/interrupts | head -n 20");
+      diagnostics.interrupts = interrupts;
+
+    } catch (err) {
+      diagnostics.error = "Failed to fetch some diagnostics";
+    }
+    res.json(diagnostics);
   });
 
   app.post("/api/run-probe", (req, res) => {

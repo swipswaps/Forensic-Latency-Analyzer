@@ -20,22 +20,34 @@ interface DoctorResult {
   };
 }
 
+interface SystemDiagnostics {
+  oomd?: string;
+  dbus?: string;
+  entropy?: string;
+  interrupts?: string;
+  error?: string;
+}
+
 export default function DoctorReport() {
   const [results, setResults] = useState<DoctorResult | null>(null);
+  const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [networkRaw, setNetworkRaw] = useState("");
 
   const fetchDoctor = async () => {
     setLoading(true);
     try {
-      const [doctorRes, networkRes] = await Promise.all([
+      const [doctorRes, networkRes, diagRes] = await Promise.all([
         fetch("/api/doctor"),
-        fetch("/api/network")
+        fetch("/api/network"),
+        fetch("/api/system-diagnostics")
       ]);
       const doctorData = await doctorRes.json();
       const networkData = await networkRes.json();
+      const diagData = await diagRes.json();
       setResults(doctorData);
       setNetworkRaw(networkData.raw);
+      setDiagnostics(diagData);
       setLoading(false);
     } catch (err) {
       console.error("Failed to fetch doctor report", err);
@@ -112,13 +124,46 @@ export default function DoctorReport() {
               </div>
             </div>
             
-            <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl border-l-4 border-l-blue-500">
-              <p className="text-sm text-slate-300 leading-relaxed">
-                The forensic toolchain is {(Object.values(results) as any[]).every(r => r.status === "OK") ? "fully operational" : "partially degraded"}. 
-                {results.perf && results.perf.status === "MISSING" && " Performance profiling (perf) is unavailable. "}
-                {results.bpftrace && results.bpftrace.status === "MISSING" && " BPF tracing capabilities are restricted. "}
-                Ensure the host has the required kernel headers and tracing utilities installed for full transparency.
-              </p>
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl border-l-4 border-l-blue-500">
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  The forensic toolchain is {(Object.values(results) as any[]).every(r => r.status === "OK") ? "fully operational" : "partially degraded"}. 
+                  {results.perf && results.perf.status === "MISSING" && " Performance profiling (perf) is unavailable. "}
+                  {results.bpftrace && results.bpftrace.status === "MISSING" && " BPF tracing capabilities are restricted. "}
+                  Ensure the host has the required kernel headers and tracing utilities installed for full transparency.
+                </p>
+              </div>
+
+              {diagnostics && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-800/30 border border-slate-800 rounded-lg">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">systemd-oomd</p>
+                    <p className={`text-xs font-mono font-bold ${diagnostics.oomd === 'active' ? 'text-emerald-400' : 'text-slate-400'}`}>
+                      {diagnostics.oomd || 'unknown'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-slate-800/30 border border-slate-800 rounded-lg">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">dbus-broker</p>
+                    <p className={`text-xs font-mono font-bold ${diagnostics.dbus === 'active' ? 'text-emerald-400' : 'text-slate-400'}`}>
+                      {diagnostics.dbus || 'unknown'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-slate-800/30 border border-slate-800 rounded-lg col-span-2">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">Entropy Availability</p>
+                    <div className="flex items-center justify-between">
+                      <p className={`text-xs font-mono font-bold ${Number(diagnostics.entropy) < 200 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                        {diagnostics.entropy || '0'} bits
+                      </p>
+                      <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all duration-500 ${Number(diagnostics.entropy) < 200 ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                          style={{ width: `${Math.min(100, (Number(diagnostics.entropy) / 4096) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -135,7 +180,7 @@ export default function DoctorReport() {
             </div>
           </div>
 
-          <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+          <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col mb-4">
             <div className="bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-700">
               <Terminal className="w-3 h-3 text-slate-400" />
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ss -tunap output</span>
@@ -144,6 +189,18 @@ export default function DoctorReport() {
               {networkRaw || "No network data available."}
             </pre>
           </div>
+
+          {diagnostics?.interrupts && (
+            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+              <div className="bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-700">
+                <Terminal className="w-3 h-3 text-slate-400" />
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Interrupt Distribution (Top 20)</span>
+              </div>
+              <pre className="flex-1 p-4 font-mono text-[10px] text-slate-400 overflow-auto custom-scrollbar whitespace-pre leading-tight">
+                {diagnostics.interrupts}
+              </pre>
+            </div>
+          )}
         </div>
       </div>
     </div>
