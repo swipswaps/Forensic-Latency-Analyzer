@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import fs from "fs";
 import cors from "cors";
+import sqlite3 from "sqlite3";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,18 +18,22 @@ async function startServer() {
   app.use(express.json());
 
   const LOG_DIR = path.join(process.cwd(), "forensic_logs");
+  const DB_FILE = path.join(LOG_DIR, "forensic_audit.db");
+
   if (!fs.existsSync(LOG_DIR)) {
     fs.mkdirSync(LOG_DIR);
   }
 
+  const db = new sqlite3.Database(DB_FILE);
+
   // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", version: "13.0.0" });
   });
 
   app.post("/api/run-probe", (req, res) => {
     const { advanced, loop, module } = req.body;
-    const args = ["forensic_latency_probe_v12.py"];
+    const args = ["forensic_latency_probe_v13.py"];
     if (advanced) args.push("--advanced");
     if (loop) args.push("--loop", loop.toString());
     if (module) args.push("--module", module);
@@ -51,10 +56,32 @@ async function startServer() {
     });
   });
 
+  // Database Endpoints
+  app.get("/api/db/runs", (req, res) => {
+    db.all("SELECT * FROM runs ORDER BY id DESC LIMIT 50", (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  });
+
+  app.get("/api/db/metrics/:runId", (req, res) => {
+    db.all("SELECT * FROM metrics WHERE run_id = ?", [req.params.runId], (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  });
+
+  app.get("/api/db/alerts/:runId", (req, res) => {
+    db.all("SELECT * FROM alerts WHERE run_id = ?", [req.params.runId], (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  });
+
   app.get("/api/logs", (req, res) => {
     fs.readdir(LOG_DIR, (err, files) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(files.sort().reverse());
+      res.json(files.filter(f => f.endsWith(".log")).sort().reverse());
     });
   });
 
