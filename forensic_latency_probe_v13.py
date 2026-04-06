@@ -230,6 +230,7 @@ class TeeLogger:
     def write(self, msg):
         self.terminal_stdout.write(msg)
         self.log.write(msg)
+        self.flush()
 
     def flush(self):
         self.terminal_stdout.flush()
@@ -393,20 +394,22 @@ def doctor():
             if int(entropy) < 200:
                 SUMMARY_LINES.append(f"WARNING: Low system entropy: {entropy}")
 
-def psi():
-    print("\n[MODULE:PSI] PRESSURE STALL INFORMATION")
-    for f in ["cpu", "memory", "io"]:
-        path = f"/proc/pressure/{f}"
-        if os.path.exists(path):
-            out = run(["cat", path], capture_output=True)
-            if "some avg10=" in str(out):
-                match = re.search(r"avg10=([\d.]+)", str(out))
-                if match:
-                    val = float(match.group(1))
-                    print(f"[METRIC:{f.upper()}_PRESSURE] {val}")
-                    DatabaseManager.log_metric(CURRENT_RUN_ID, f"{f.upper()}_PRESSURE", val)
-                    if val > 5.0:
-                        SUMMARY_LINES.append(f"CRITICAL: High {f.upper()} pressure detected: {val}%")
+def psi(samples=5):
+    print(f"\n[MODULE:PSI] PRESSURE STALL INFORMATION ({samples} samples)")
+    for _ in range(samples):
+        for f in ["cpu", "memory", "io"]:
+            path = f"/proc/pressure/{f}"
+            if os.path.exists(path):
+                out = run(["cat", path], capture_output=True)
+                if "some avg10=" in str(out):
+                    match = re.search(r"avg10=([\d.]+)", str(out))
+                    if match:
+                        val = float(match.group(1))
+                        print(f"[METRIC:{f.upper()}_PRESSURE] {val}", flush=True)
+                        DatabaseManager.log_metric(CURRENT_RUN_ID, f"{f.upper()}_PRESSURE", val)
+                        if val > 5.0:
+                            SUMMARY_LINES.append(f"CRITICAL: High {f.upper()} pressure detected: {val}%")
+        time.sleep(1)
 
 def core_imbalance_check():
     print("\n[MODULE:CPU_CORE] CORE IMBALANCE AUDIT")

@@ -176,6 +176,33 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
           >
             <RefreshCw className="w-3 h-3" />
           </button>
+          <button 
+            onClick={() => {
+              const fetchData = async () => {
+                setLoading(true);
+                try {
+                  const response = await fetch(`/api/db/metrics/${runId}`);
+                  const json = await response.json();
+                  const filtered = json
+                    .filter((m: any) => m.key === metricKey)
+                    .map((m: any) => ({
+                      timestamp: m.timestamp,
+                      value: m.value
+                    }));
+                  setData(filtered);
+                } catch (error) {
+                  console.error(`Failed to fetch metric ${metricKey}:`, error);
+                } finally {
+                  setLoading(false);
+                }
+              };
+              fetchData();
+            }}
+            className="p-1 hover:bg-slate-800 rounded transition-colors text-slate-500 hover:text-emerald-400"
+            title="Refresh Data"
+          >
+            <Activity className={`w-3 h-3 ${loading ? 'animate-pulse' : ''}`} />
+          </button>
           <div className="flex items-center gap-1 text-[10px] font-mono text-slate-600">
             <ZoomIn className="w-3 h-3" />
             <span>Metric: {metricKey}</span>
@@ -198,8 +225,13 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
             </div>
           </div>
         ) : data.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center text-[10px] font-mono text-slate-600 uppercase">
-            No Data Points Recorded
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
+              No Data Points Recorded
+            </div>
+            <div className="text-[9px] font-mono text-slate-600 italic">
+              {runId === 0 ? "Real-time metrics are streaming to the database." : "The probe did not record pressure stalls during this audit window."}
+            </div>
           </div>
         ) : (
           <svg 

@@ -50,6 +50,28 @@ export const Dashboard: React.FC = () => {
   const [probeOutput, setProbeOutput] = useState<string[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
 
+  const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const fetchProcessLogs = async (processName: string) => {
+    setLoadingLogs(true);
+    try {
+      const response = await fetch(`/api/process-logs/${encodeURIComponent(processName)}`);
+      const data = await response.json();
+      setSelectedProcessLogs(data.logs || []);
+    } catch (error) {
+      console.error('Failed to fetch process logs:', error);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedProcess) {
+      fetchProcessLogs(selectedProcess.name);
+    }
+  }, [selectedProcess]);
+
   const fetchRuns = async () => {
     try {
       const response = await fetch('/api/db/runs');
@@ -259,6 +281,24 @@ export const Dashboard: React.FC = () => {
                       <div>
                         <div className="text-[9px] text-slate-600 uppercase mb-1">Children</div>
                         <div className="text-xs font-mono text-slate-300">{selectedProcess.children?.length || 0}</div>
+                      </div>
+                    </div>
+                    
+                    <div className="pt-2 border-t border-slate-800">
+                      <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
+                        <span>Forensic Trace</span>
+                        {loadingLogs && <Activity className="w-2 h-2 animate-pulse" />}
+                      </div>
+                      <div className="h-40 bg-black/40 rounded p-2 overflow-y-auto custom-scrollbar font-mono text-[8px] text-slate-400 leading-tight">
+                        {selectedProcessLogs.length > 0 ? (
+                          selectedProcessLogs.map((log, i) => (
+                            <div key={i} className="mb-1 border-l border-slate-800 pl-1">
+                              {log}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-slate-600 italic">No specific trace found in current audit log.</div>
+                        )}
                       </div>
                     </div>
                   </div>

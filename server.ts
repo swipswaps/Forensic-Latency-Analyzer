@@ -202,7 +202,7 @@ async function startServer() {
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const pythonProcess = spawn("python3", args);
+    const pythonProcess = spawn("python3", ["-u", ...args]);
 
     pythonProcess.stdout.on("data", (data) => {
       res.write(data);
@@ -215,6 +215,30 @@ async function startServer() {
     pythonProcess.on("close", (code) => {
       res.end(`\n[PROCESS COMPLETED WITH CODE ${code}]\n`);
     });
+  });
+
+  app.get("/api/process-logs/:processName", async (req, res) => {
+    try {
+      const processName = req.params.processName.split(" (")[0]; // Remove PID if present
+      const files = fs.readdirSync(LOG_DIR).filter(f => f.endsWith(".log")).sort().reverse();
+      if (files.length === 0) return res.json({ logs: ["No logs found."] });
+      
+      const latestLog = path.join(LOG_DIR, files[0]);
+      const { stdout } = await execAsync(`grep -i "${processName}" "${latestLog}" | tail -n 20 || echo "No specific logs for ${processName}"`);
+      res.json({ logs: stdout.split("\n").filter(l => l.trim().length > 0) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/db/latest-log", (req, res) => {
+    try {
+      const files = fs.readdirSync(LOG_DIR).filter(f => f.endsWith(".log")).sort().reverse();
+      if (files.length === 0) return res.status(404).json({ error: "No logs found" });
+      res.json({ path: files[0] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Database Endpoints
