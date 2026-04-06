@@ -1,1 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 font-sans antialiased;
+}
+
+.technical-panel {
+  @apply bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur-sm shadow-xl;
+}
+
+.metric-value {
+  @apply font-mono text-2xl font-bold text-emerald-400;
+}
+
+.metric-label {
+  @apply text-xs uppercase tracking-wider text-slate-500 font-medium;
+}
+
+/* D3 Tooltip */
+.d3-tooltip {
+  @apply absolute hidden p-2 bg-slate-900 border border-slate-700 rounded shadow-lg pointer-events-none text-xs z-50;
+}
