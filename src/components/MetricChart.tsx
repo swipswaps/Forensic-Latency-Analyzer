@@ -98,20 +98,22 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, metricKe
 
     g.append('path')
       .datum(data)
+      .attr('class', `area-${metricKey}`)
       .attr('fill', `url(#${gradientId})`)
       .attr('d', area);
 
     g.append('path')
       .datum(data)
+      .attr('class', `line-${metricKey}`)
       .attr('fill', 'none')
       .attr('stroke', color)
       .attr('stroke-width', 2)
       .attr('d', line);
 
     // Axes
-    g.append('g')
+    const xAxis = g.append('g')
       .attr('transform', `translate(0,${height})`)
-      .attr('class', 'text-slate-500 font-mono text-[10px]')
+      .attr('class', 'x-axis text-slate-500 font-mono text-[10px]')
       .call(d3.axisBottom(x).ticks(5).tickFormat(d3.timeFormat('%H:%M:%S') as any));
 
     g.append('g')
@@ -124,11 +126,24 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, metricKe
       .extent([[0, 0], [width, height]])
       .on('zoom', (event) => {
         const newX = event.transform.rescaleX(x);
-        g.select('.x-axis').call(d3.axisBottom(newX) as any);
-        g.selectAll('path').attr('transform', event.transform);
+        xAxis.call(d3.axisBottom(newX).ticks(5).tickFormat(d3.timeFormat('%H:%M:%S') as any) as any);
+        
+        const updatedLine = d3.line<MetricData>()
+          .x(d => newX(new Date(d.timestamp)))
+          .y(d => y(d.value))
+          .curve(d3.curveMonotoneX);
+
+        const updatedArea = d3.area<MetricData>()
+          .x(d => newX(new Date(d.timestamp)))
+          .y0(height)
+          .y1(d => y(d.value))
+          .curve(d3.curveMonotoneX);
+
+        g.select(`.line-${metricKey}`).attr('d', updatedLine(data));
+        g.select(`.area-${metricKey}`).attr('d', updatedArea(data));
       });
 
-    // svg.call(zoom as any);
+    svg.call(zoom as any);
 
   }, [data, color, metricKey]);
 
