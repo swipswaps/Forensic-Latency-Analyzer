@@ -2,7 +2,7 @@
 # =============================================================================
 # forensic_latency_probe_v13.py
 # =============================================================================
-# CANONICAL FORENSIC LATENCY ANALYZER v13.2.4 (8 EFIXES APPLIED)
+# CANONICAL FORENSIC LATENCY ANALYZER v13.2.6 (SLABTOP HARDENING)
 # =============================================================================
 
 import os
@@ -276,7 +276,7 @@ def enforce_compliance():
     if not isinstance(sys.stdout, TeeLogger):
         print("[COMPLIANCE:WARNING] stdout is not a TeeLogger. Logging might be incomplete.")
         
-    print("[COMPLIANCE] v13.2.4 Integrity Verified. No omissions.")
+    print("[COMPLIANCE] v13.2.6 Integrity Verified. No omissions.")
 
 # =============================================================================
 # CORE EXECUTION WRAPPER
@@ -471,12 +471,21 @@ def memory():
     print("\n[MODULE:MEM] MEMORY PRESSURE AND SLAB AUDIT")
     run(["vmstat", "-s"])
     run(["pidstat", "-r", "1", "3"])
-    run(["slabtop", "-o", "-n", "1"])
+    # EFix 10: Fix slabtop iteration flag for Fedora compatibility
+    run(["slabtop", "-o"])
     
-    out = run(["lsof"], capture_output=True)
+    # EFix 9: Mitigate output storm by counting via shell pipe
+    print("[ACTION] Counting system-wide open files (targeted)...")
+    out = run(["bash", "-c", "lsof -n -P | wc -l"], capture_output=True)
     if out:
-        count = out.count("\n") - 1
-        print(f"[METRIC:OPEN_FILES] {count}")
+        try:
+            count = int(out.strip())
+            print(f"[METRIC:OPEN_FILES] {count}")
+            DatabaseManager.log_metric(CURRENT_RUN_ID, "OPEN_FILES", count)
+            if count > 100000:
+                SUMMARY_LINES.append(f"WARNING: Extremely high number of open files: {count}")
+        except:
+            pass
 
 def numa_audit():
     print("\n[MODULE:NUMA] LOCALITY CONTENTION AUDIT")
