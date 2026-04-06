@@ -221,14 +221,22 @@ async function startServer() {
       sendSSE(`[STDERR] ${data.toString()}`);
     });
 
-    pythonProcess.on("close", (code) => {
-      sendSSE(`\n[PROCESS COMPLETED WITH CODE ${code}]\n`);
+    pythonProcess.on("close", (code, signal) => {
+      const status = code !== null ? `CODE ${code}` : `SIGNAL ${signal}`;
+      sendSSE(`\n[PROCESS COMPLETED WITH ${status}]\n`);
+      res.end();
+    });
+
+    pythonProcess.on("error", (err) => {
+      sendSSE(`\n[ERROR] Failed to start process: ${err.message}\n`);
       res.end();
     });
 
     // Cleanup if client disconnects
     req.on("close", () => {
-      pythonProcess.kill();
+      if (pythonProcess.exitCode === null) {
+        pythonProcess.kill();
+      }
     });
   });
 
