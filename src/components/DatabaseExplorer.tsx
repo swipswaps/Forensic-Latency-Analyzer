@@ -35,6 +35,7 @@ interface Alert {
   run_id: number;
   severity: string;
   message: string;
+  run_timestamp?: string;
 }
 
 export default function DatabaseExplorer() {
@@ -42,11 +43,19 @@ export default function DatabaseExplorer() {
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [globalAlerts, setGlobalAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [viewMode, setViewMode] = useState<"run" | "alerts">("run");
+  
+  // Filters
+  const [severityFilter, setSeverityFilter] = useState<string>("ALL");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
 
   useEffect(() => {
     fetchRuns();
+    fetchGlobalAlerts();
   }, []);
 
   const fetchRuns = async () => {
@@ -57,6 +66,16 @@ export default function DatabaseExplorer() {
       setLoading(false);
     } catch (err) {
       console.error("Failed to fetch runs", err);
+    }
+  };
+
+  const fetchGlobalAlerts = async () => {
+    try {
+      const res = await fetch("/api/db/alerts");
+      const data = await res.json();
+      setGlobalAlerts(data);
+    } catch (err) {
+      console.error("Failed to fetch global alerts", err);
     }
   };
 
@@ -81,6 +100,29 @@ export default function DatabaseExplorer() {
     run.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
     run.summary?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const filteredAlerts = globalAlerts.filter(alert => {
+    const matchesSeverity = severityFilter === "ALL" || alert.severity === severityFilter;
+    const alertDate = alert.run_timestamp ? new Date(alert.run_timestamp) : null;
+    
+    let matchesDate = true;
+    if (alertDate) {
+      if (startDate) {
+        const start = new Date(startDate);
+        if (alertDate < start) matchesDate = false;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        // Set end to end of day
+        end.setHours(23, 59, 59, 999);
+        if (alertDate > end) matchesDate = false;
+      }
+    } else if (startDate || endDate) {
+      matchesDate = false;
+    }
+    
+    return matchesSeverity && matchesDate;
+  });
 
   return (
     <div className="grid grid-cols-12 gap-6 h-[calc(100vh-12rem)] animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -141,98 +183,208 @@ export default function DatabaseExplorer() {
         </div>
       </div>
 
-      {/* Run Details */}
+      {/* Run Details / Alerts Explorer */}
       <div className="col-span-12 lg:col-span-8 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col shadow-xl">
-        {selectedRun ? (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Header */}
-            <div className="p-6 border-b border-slate-800 bg-slate-800/30">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <div className="bg-blue-500/20 p-3 rounded-xl">
-                    <Database className="w-6 h-6 text-blue-400" />
+        {/* View Switcher */}
+        <div className="flex border-b border-slate-800">
+          <button 
+            onClick={() => setViewMode("run")}
+            className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all ${
+              viewMode === "run" ? "text-blue-400 bg-blue-500/5 border-b-2 border-blue-500" : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            Audit Details
+          </button>
+          <button 
+            onClick={() => setViewMode("alerts")}
+            className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all ${
+              viewMode === "alerts" ? "text-red-400 bg-red-500/5 border-b-2 border-red-500" : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            Alerts Explorer
+          </button>
+        </div>
+
+        {viewMode === "run" ? (
+          selectedRun ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="p-6 border-b border-slate-800 bg-slate-800/30">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-blue-500/20 p-3 rounded-xl">
+                      <Database className="w-6 h-6 text-blue-400" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-white">Audit Details</h2>
+                      <p className="text-xs text-slate-500 font-mono uppercase tracking-widest">Run ID: {selectedRun}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-white">Audit Details</h2>
-                    <p className="text-xs text-slate-500 font-mono uppercase tracking-widest">Run ID: {selectedRun}</p>
+                  <div className="flex gap-2">
+                    <button className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 transition-colors">
+                      <Download className="w-4 h-4" />
+                    </button>
+                    <button className="p-2 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400 transition-colors">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 transition-colors">
-                    <Download className="w-4 h-4" />
-                  </button>
-                  <button className="p-2 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400 transition-colors">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-auto custom-scrollbar p-6 space-y-8">
+                {/* Summary Section */}
+                <section>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <FileJson className="w-3 h-3" />
+                    Executive Summary
+                  </h3>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-sm text-slate-300 whitespace-pre-wrap leading-relaxed shadow-inner">
+                    {runs.find(r => r.id === selectedRun)?.summary || "No summary available for this run."}
+                  </div>
+                </section>
+
+                {/* Alerts Section */}
+                {alerts.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <AlertCircle className="w-3 h-3 text-red-400" />
+                      Security & Performance Alerts
+                    </h3>
+                    <div className="grid grid-cols-1 gap-3">
+                      {alerts.map((alert) => (
+                        <div key={alert.id} className="flex gap-4 p-4 bg-red-500/5 border border-red-500/20 rounded-xl group hover:border-red-500/40 transition-all">
+                          <div className={`mt-1 h-2 w-2 rounded-full shrink-0 ${alert.severity === "CRITICAL" ? "bg-red-500 animate-pulse" : "bg-amber-500"}`} />
+                          <div>
+                            <p className="text-sm text-slate-200 leading-relaxed">{alert.message}</p>
+                            <span className="text-[10px] font-bold text-red-400/60 uppercase mt-2 block">{alert.severity}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Metrics Section */}
+                <section>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <Activity className="w-3 h-3 text-blue-400" />
+                    Captured Metrics
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {metrics.map((metric) => (
+                      <div key={metric.id} className="bg-slate-800/30 border border-slate-800 rounded-xl p-4 hover:border-slate-700 transition-all">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase mb-1 truncate">{metric.key.replace(/_/g, " ")}</p>
+                        <p className="text-lg font-bold text-white font-mono">{metric.value}</p>
+                        <p className="text-[8px] text-slate-600 font-mono mt-1">{new Date(metric.timestamp).toLocaleTimeString()}</p>
+                      </div>
+                    ))}
+                    {metrics.length === 0 && (
+                      <div className="col-span-full py-8 text-center text-slate-600 italic text-sm border border-dashed border-slate-800 rounded-xl">
+                        No metrics recorded for this run.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4 opacity-50">
+              <div className="bg-slate-800 p-6 rounded-full">
+                <Database className="w-12 h-12" />
+              </div>
+              <div className="text-center">
+                <p className="font-bold text-lg">No Audit Selected</p>
+                <p className="text-sm">Select a record from the list to view forensic details</p>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Alerts Explorer Header & Filters */}
+            <div className="p-6 border-b border-slate-800 bg-slate-800/30 space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="bg-red-500/20 p-3 rounded-xl">
+                  <AlertCircle className="w-6 h-6 text-red-400" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-white">Alerts Explorer</h2>
+                  <p className="text-xs text-slate-500 font-mono uppercase tracking-widest">Historical Forensic Analysis</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">Severity</label>
+                  <select 
+                    value={severityFilter}
+                    onChange={(e) => setSeverityFilter(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+                  >
+                    <option value="ALL">All Severities</option>
+                    <option value="CRITICAL">Critical</option>
+                    <option value="WARNING">Warning</option>
+                    <option value="INFO">Info</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">Start Date</label>
+                  <input 
+                    type="date" 
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">End Date</label>
+                  <input 
+                    type="date" 
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+                  />
                 </div>
               </div>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-auto custom-scrollbar p-6 space-y-8">
-              {/* Summary Section */}
-              <section>
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <FileJson className="w-3 h-3" />
-                  Executive Summary
-                </h3>
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-sm text-slate-300 whitespace-pre-wrap leading-relaxed shadow-inner">
-                  {runs.find(r => r.id === selectedRun)?.summary || "No summary available for this run."}
-                </div>
-              </section>
-
-              {/* Alerts Section */}
-              {alerts.length > 0 && (
-                <section>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <AlertCircle className="w-3 h-3 text-red-400" />
-                    Security & Performance Alerts
-                  </h3>
-                  <div className="grid grid-cols-1 gap-3">
-                    {alerts.map((alert) => (
-                      <div key={alert.id} className="flex gap-4 p-4 bg-red-500/5 border border-red-500/20 rounded-xl group hover:border-red-500/40 transition-all">
-                        <div className={`mt-1 h-2 w-2 rounded-full shrink-0 ${alert.severity === "CRITICAL" ? "bg-red-500 animate-pulse" : "bg-amber-500"}`} />
-                        <div>
-                          <p className="text-sm text-slate-200 leading-relaxed">{alert.message}</p>
-                          <span className="text-[10px] font-bold text-red-400/60 uppercase mt-2 block">{alert.severity}</span>
+            {/* Alerts List */}
+            <div className="flex-1 overflow-auto custom-scrollbar p-6">
+              <div className="space-y-4">
+                {filteredAlerts.length > 0 ? (
+                  filteredAlerts.map((alert) => (
+                    <div key={alert.id} className="flex gap-4 p-4 bg-slate-800/30 border border-slate-800 rounded-xl group hover:border-slate-700 transition-all">
+                      <div className={`mt-1 h-2 w-2 rounded-full shrink-0 ${alert.severity === "CRITICAL" ? "bg-red-500 animate-pulse" : alert.severity === "WARNING" ? "bg-amber-500" : "bg-blue-500"}`} />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-[10px] font-bold uppercase ${alert.severity === "CRITICAL" ? "text-red-400" : alert.severity === "WARNING" ? "text-amber-400" : "text-blue-400"}`}>
+                            {alert.severity}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500">
+                            {alert.run_timestamp ? new Date(alert.run_timestamp).toLocaleString() : "Unknown Time"}
+                          </span>
                         </div>
+                        <p className="text-sm text-slate-200 leading-relaxed mb-3">{alert.message}</p>
+                        <button 
+                          onClick={() => {
+                            fetchRunDetails(alert.run_id);
+                            setViewMode("run");
+                          }}
+                          className="text-[10px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                        >
+                          View Audit #{alert.run_id}
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
                       </div>
-                    ))}
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-20 text-slate-600 gap-4 opacity-50">
+                    <Filter className="w-12 h-12" />
+                    <p className="text-sm italic">No alerts match the current filters</p>
                   </div>
-                </section>
-              )}
-
-              {/* Metrics Section */}
-              <section>
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <Activity className="w-3 h-3 text-blue-400" />
-                  Captured Metrics
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {metrics.map((metric) => (
-                    <div key={metric.id} className="bg-slate-800/30 border border-slate-800 rounded-xl p-4 hover:border-slate-700 transition-all">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase mb-1 truncate">{metric.key.replace(/_/g, " ")}</p>
-                      <p className="text-lg font-bold text-white font-mono">{metric.value}</p>
-                      <p className="text-[8px] text-slate-600 font-mono mt-1">{new Date(metric.timestamp).toLocaleTimeString()}</p>
-                    </div>
-                  ))}
-                  {metrics.length === 0 && (
-                    <div className="col-span-full py-8 text-center text-slate-600 italic text-sm border border-dashed border-slate-800 rounded-xl">
-                      No metrics recorded for this run.
-                    </div>
-                  )}
-                </div>
-              </section>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4 opacity-50">
-            <div className="bg-slate-800 p-6 rounded-full">
-              <Database className="w-12 h-12" />
-            </div>
-            <div className="text-center">
-              <p className="font-bold text-lg">No Audit Selected</p>
-              <p className="text-sm">Select a record from the list to view forensic details</p>
+                )}
+              </div>
             </div>
           </div>
         )}

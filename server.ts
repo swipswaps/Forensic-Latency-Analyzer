@@ -260,6 +260,20 @@ async function startServer() {
     }
   });
 
+  app.get("/api/db/alerts", (req, res) => {
+    try {
+      const rows = db.prepare(`
+        SELECT alerts.*, runs.timestamp as run_timestamp 
+        FROM alerts 
+        JOIN runs ON alerts.run_id = runs.id 
+        ORDER BY alerts.id DESC
+      `).all();
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/db/alerts/:runId", (req, res) => {
     try {
       const rows = db.prepare("SELECT * FROM alerts WHERE run_id = ?").all(req.params.runId);
