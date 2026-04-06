@@ -46,6 +46,9 @@ export const Dashboard: React.FC = () => {
   const [selectedProcess, setSelectedProcess] = useState<ProcessNode | null>(null);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isProbing, setIsProbing] = useState(false);
+  const [probeOutput, setProbeOutput] = useState<string[]>([]);
+  const [showTerminal, setShowTerminal] = useState(false);
 
   const fetchRuns = async () => {
     try {
@@ -57,6 +60,39 @@ export const Dashboard: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to fetch runs:', error);
+    }
+  };
+
+  const runProbe = async (advanced = false) => {
+    setIsProbing(true);
+    setProbeOutput([]);
+    setShowTerminal(true);
+    
+    try {
+      const response = await fetch('/api/run-probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ advanced })
+      });
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          setProbeOutput(prev => [...prev, chunk].slice(-100));
+        }
+      }
+      
+      // Refresh runs after completion
+      await fetchRuns();
+    } catch (error) {
+      setProbeOutput(prev => [...prev, `\n[ERROR] Failed to trigger probe: ${error}`]);
+    } finally {
+      setIsProbing(false);
     }
   };
 
@@ -255,6 +291,55 @@ export const Dashboard: React.FC = () => {
 
         {/* Right Column: Run History & Alerts */}
         <div className="space-y-6">
+          {/* Live Control Panel */}
+          <div className="technical-panel p-4 border-emerald-500/20 bg-emerald-500/5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-emerald-400">Live Control</h3>
+              </div>
+              {isProbing && (
+                <div className="flex items-center gap-2 text-[10px] font-mono text-emerald-500 animate-pulse">
+                  <Activity className="w-3 h-3" />
+                  PROBE ACTIVE
+                </div>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <button
+                disabled={isProbing}
+                onClick={() => runProbe(false)}
+                className="flex items-center justify-center gap-2 py-2 px-3 bg-emerald-500/10 border border-emerald-500/30 rounded text-[10px] font-mono text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50 transition-all"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                Standard
+              </button>
+              <button
+                disabled={isProbing}
+                onClick={() => runProbe(true)}
+                className="flex items-center justify-center gap-2 py-2 px-3 bg-blue-500/10 border border-blue-500/30 rounded text-[10px] font-mono text-blue-400 hover:bg-blue-500/20 disabled:opacity-50 transition-all"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                Advanced
+              </button>
+            </div>
+
+            {showTerminal && (
+              <div className="relative group">
+                <div className="h-32 bg-black/80 rounded border border-slate-800 p-2 font-mono text-[9px] text-emerald-500/80 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+                  {probeOutput.length === 0 ? '> Initializing forensic environment...' : probeOutput.join('')}
+                </div>
+                <button 
+                  onClick={() => setShowTerminal(false)}
+                  className="absolute top-1 right-1 p-1 text-slate-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="technical-panel p-4 h-full flex flex-col">
             <div className="flex items-center gap-2 mb-4">
               <Terminal className="w-4 h-4 text-slate-400" />
@@ -341,9 +426,9 @@ export const Dashboard: React.FC = () => {
       {/* Footer */}
       <footer className="pt-8 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
         <div className="flex items-center gap-4">
-          <span>System ID: {Math.random().toString(36).substring(7).toUpperCase()}</span>
+          <span>System ID: {(systemMetrics as any)?.arch?.toUpperCase() || 'X86_64'}-{Math.random().toString(36).substring(7).toUpperCase()}</span>
           <span className="w-1 h-1 rounded-full bg-slate-800" />
-          <span>Kernel: 6.19.9-200.fc43.x86_64</span>
+          <span>Kernel: {(systemMetrics as any)?.release || 'Detecting...'}</span>
         </div>
         <div className="flex items-center gap-6">
           <a href="#" className="hover:text-emerald-400 transition-colors">Documentation</a>
