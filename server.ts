@@ -199,21 +199,36 @@ async function startServer() {
     if (loop) args.push("--loop", loop.toString());
     if (module) args.push("--module", module);
 
-    res.setHeader("Content-Type", "text/plain");
-    res.setHeader("Transfer-Encoding", "chunked");
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Disable buffering for Nginx
+    res.flushHeaders();
 
     const pythonProcess = spawn("python3", ["-u", ...args]);
 
+    const sendSSE = (data: string) => {
+      // Format as SSE data
+      res.write(`data: ${JSON.stringify({ text: data })}\n\n`);
+    };
+
     pythonProcess.stdout.on("data", (data) => {
-      res.write(data);
+      sendSSE(data.toString());
     });
 
     pythonProcess.stderr.on("data", (data) => {
-      res.write(data);
+      sendSSE(`[STDERR] ${data.toString()}`);
     });
 
     pythonProcess.on("close", (code) => {
-      res.end(`\n[PROCESS COMPLETED WITH CODE ${code}]\n`);
+      sendSSE(`\n[PROCESS COMPLETED WITH CODE ${code}]\n`);
+      res.end();
+    });
+
+    // Cleanup if client disconnects
+    req.on("close", () => {
+      pythonProcess.kill();
     });
   });
 

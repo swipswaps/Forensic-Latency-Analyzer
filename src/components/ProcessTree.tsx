@@ -10,9 +10,10 @@ interface ProcessNode {
 
 interface ProcessTreeProps {
   onSelectProcess?: (process: ProcessNode) => void;
+  isProbing?: boolean;
 }
 
-export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess }) => {
+export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ProcessNode | null>(null);
@@ -57,7 +58,33 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess }) => 
 
     treemap(root);
 
-    const color = d3.scaleOrdinal(d3.schemeTableau10);
+    const color = d3.scaleOrdinal<string>()
+      .range(['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']);
+
+    // Add gradients
+    const defs = svg.append('defs');
+    
+    root.descendants().forEach((d, i) => {
+      const gradientId = `gradient-${i}`;
+      const baseColor = d.children ? '#1e293b' : color(d.parent?.data.name || 'root');
+      
+      const gradient = defs.append('linearGradient')
+        .attr('id', gradientId)
+        .attr('x1', '0%')
+        .attr('y1', '0%')
+        .attr('x2', '100%')
+        .attr('y2', '100%');
+
+      gradient.append('stop')
+        .attr('offset', '0%')
+        .attr('stop-color', baseColor)
+        .attr('stop-opacity', 0.8);
+
+      gradient.append('stop')
+        .attr('offset', '100%')
+        .attr('stop-color', d3.color(baseColor)?.darker(1).toString() || baseColor)
+        .attr('stop-opacity', 1);
+    });
 
     const cell = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g')
       .data(root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[])
@@ -68,21 +95,31 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess }) => 
       .attr('id', d => `rect-${d.data.name.replace(/\s+/g, '-')}`)
       .attr('width', d => d.x1 - d.x0)
       .attr('height', d => d.y1 - d.y0)
-      .attr('fill', d => d.children ? '#1e293b' : color(d.parent?.data.name || 'root'))
-      .attr('class', 'cursor-pointer hover:opacity-80 transition-opacity duration-200')
+      .attr('fill', (d, i) => `url(#gradient-${i})`)
+      .attr('stroke', '#0f172a')
+      .attr('stroke-width', 1)
+      .attr('class', 'cursor-pointer hover:brightness-125 transition-all duration-300')
       .on('click', (event, d) => {
         if (onSelectProcess) onSelectProcess(d.data);
         zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
+        
+        // Highlight selection
+        svg.selectAll('rect').attr('stroke', '#0f172a').attr('stroke-width', 1);
+        d3.select(event.currentTarget).attr('stroke', '#10b981').attr('stroke-width', 2);
       });
 
     cell.append('text')
-      .attr('class', 'pointer-events-none fill-slate-300 text-[10px] font-mono')
-      .attr('opacity', d => (d.x1 - d.x0 > 50 && d.y1 - d.y0 > 25) ? 1 : 0)
+      .attr('class', 'pointer-events-none fill-white/80 text-[9px] font-mono font-bold')
+      .attr('opacity', d => (d.x1 - d.x0 > 60 && d.y1 - d.y0 > 30) ? 1 : 0)
       .selectAll('tspan')
-      .data(d => d.data.name.split(/(?=[A-Z][^A-Z])/g).concat(d.value ? d.value.toString() : ''))
+      .data(d => {
+        const name = d.data.name.split(' (')[0];
+        const pid = d.data.name.match(/\((\d+)\)/)?.[1] || '';
+        return [name, pid ? `PID: ${pid}` : ''];
+      })
       .enter().append('tspan')
-      .attr('x', 4)
-      .attr('y', (d, i) => 13 + i * 10)
+      .attr('x', 6)
+      .attr('y', (d, i) => 15 + i * 11)
       .text(d => String(d));
 
     cell.append('title')
@@ -112,6 +149,12 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess }) => 
         <div className="flex items-center gap-2">
           <Maximize2 className="w-4 h-4 text-emerald-400" />
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Process Hierarchy Treemap</h3>
+          {isProbing && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-bold text-emerald-400 animate-pulse ml-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              LIVE DATA STREAM
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button 

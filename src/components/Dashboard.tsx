@@ -53,6 +53,20 @@ export const Dashboard: React.FC = () => {
   const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
+  // Live log filtering
+  useEffect(() => {
+    if (isProbing && selectedProcess && probeOutput.length > 0) {
+      const lastChunk = probeOutput[probeOutput.length - 1];
+      const lines = lastChunk.split('\n');
+      const relevantLines = lines.filter(line => 
+        line.toLowerCase().includes(selectedProcess.name.toLowerCase())
+      );
+      if (relevantLines.length > 0) {
+        setSelectedProcessLogs(prev => [...prev, ...relevantLines].slice(-50));
+      }
+    }
+  }, [probeOutput, isProbing, selectedProcess]);
+
   const fetchProcessLogs = async (processName: string) => {
     setLoadingLogs(true);
     try {
@@ -101,11 +115,25 @@ export const Dashboard: React.FC = () => {
       const decoder = new TextDecoder();
 
       if (reader) {
+        let buffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          setProbeOutput(prev => [...prev, chunk].slice(-100));
+          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const json = JSON.parse(line.substring(6));
+                setProbeOutput(prev => [...prev, json.text].slice(-100));
+              } catch (e) {
+                console.error("Failed to parse SSE line", line);
+              }
+            }
+          }
         }
       }
       
@@ -249,7 +277,7 @@ export const Dashboard: React.FC = () => {
         {/* Left Column: Process Tree (2/3 width) */}
         <div className="lg:col-span-2 space-y-6">
           <div className="relative">
-            <ProcessTree onSelectProcess={setSelectedProcess} />
+            <ProcessTree onSelectProcess={setSelectedProcess} isProbing={isProbing} />
             
             <AnimatePresence>
               {selectedProcess && (
@@ -259,15 +287,23 @@ export const Dashboard: React.FC = () => {
                   exit={{ opacity: 0, x: 20 }}
                   className="absolute top-4 right-4 w-64 bg-slate-900/95 border border-slate-700 rounded-lg shadow-2xl p-4 backdrop-blur-md z-10"
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Info className="w-4 h-4 text-emerald-400" />
-                      <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Process Inspector</span>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Info className="w-4 h-4 text-emerald-400" />
+                        <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Process Inspector</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isProbing && (
+                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-bold text-emerald-400 animate-pulse">
+                            <Activity className="w-2 h-2" />
+                            LIVE
+                          </div>
+                        )}
+                        <button onClick={() => setSelectedProcess(null)} className="text-slate-500 hover:text-white">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <button onClick={() => setSelectedProcess(null)} className="text-slate-500 hover:text-white">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
                   <div className="space-y-3">
                     <div>
                       <div className="text-[9px] text-slate-600 uppercase mb-1">Command</div>
@@ -286,18 +322,36 @@ export const Dashboard: React.FC = () => {
                     
                     <div className="pt-2 border-t border-slate-800">
                       <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
-                        <span>Forensic Trace</span>
-                        {loadingLogs && <Activity className="w-2 h-2 animate-pulse" />}
+                        <span className="flex items-center gap-1">
+                          <Terminal className="w-2.5 h-2.5" />
+                          Forensic Trace
+                        </span>
+                        {loadingLogs && <Activity className="w-2 h-2 animate-pulse text-emerald-500" />}
                       </div>
-                      <div className="h-40 bg-black/40 rounded p-2 overflow-y-auto custom-scrollbar font-mono text-[8px] text-slate-400 leading-tight">
+                      <div className="h-48 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[8px] leading-tight">
                         {selectedProcessLogs.length > 0 ? (
-                          selectedProcessLogs.map((log, i) => (
-                            <div key={i} className="mb-1 border-l border-slate-800 pl-1">
-                              {log}
-                            </div>
-                          ))
+                          selectedProcessLogs.map((log, i) => {
+                            const isError = log.includes('ERROR') || log.includes('CRITICAL') || log.includes('FAILED');
+                            const isSuccess = log.includes('SUCCESS') || log.includes('OK');
+                            const isMetric = log.includes('[METRIC:');
+                            
+                            return (
+                              <div key={i} className={`mb-1 border-l-2 pl-1.5 py-0.5 ${
+                                isError ? 'border-rose-500 text-rose-400 bg-rose-500/5' : 
+                                isSuccess ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5' : 
+                                isMetric ? 'border-blue-500 text-blue-400 bg-blue-500/5' :
+                                'border-slate-800 text-slate-400'
+                              }`}>
+                                <span className="opacity-50 mr-1">[{i.toString().padStart(2, '0')}]</span>
+                                {log}
+                              </div>
+                            );
+                          })
                         ) : (
-                          <div className="text-slate-600 italic">No specific trace found in current audit log.</div>
+                          <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2">
+                            <Activity className="w-4 h-4 opacity-20" />
+                            <span>No active trace detected</span>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -366,13 +420,27 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {showTerminal && (
-              <div className="relative group">
-                <div className="h-32 bg-black/80 rounded border border-slate-800 p-2 font-mono text-[9px] text-emerald-500/80 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
-                  {probeOutput.length === 0 ? '> Initializing forensic environment...' : probeOutput.join('')}
+              <div className="relative group mt-4 overflow-hidden rounded border border-slate-800 bg-black/90">
+                {/* Scanline effect */}
+                <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%] z-10 opacity-30" />
+                
+                <div className="h-48 p-3 font-mono text-[9px] text-emerald-500/90 overflow-y-auto custom-scrollbar whitespace-pre-wrap relative z-0">
+                  {probeOutput.length === 0 ? (
+                    <div className="flex items-center gap-2 animate-pulse">
+                      <span className="w-1.5 h-3 bg-emerald-500" />
+                      Initializing forensic environment...
+                    </div>
+                  ) : (
+                    probeOutput.map((chunk, i) => (
+                      <span key={i} className={chunk.includes('ERROR') ? 'text-rose-400' : chunk.includes('WARNING') ? 'text-amber-400' : ''}>
+                        {chunk}
+                      </span>
+                    ))
+                  )}
                 </div>
                 <button 
                   onClick={() => setShowTerminal(false)}
-                  className="absolute top-1 right-1 p-1 text-slate-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute top-2 right-2 p-1 text-slate-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity z-20"
                 >
                   <X className="w-3 h-3" />
                 </button>
