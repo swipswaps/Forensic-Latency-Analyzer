@@ -10,7 +10,9 @@ import {
   Terminal,
   Activity,
   Clock,
-  HardDrive
+  HardDrive,
+  Info,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -20,6 +22,12 @@ interface Run {
   mode: string;
   status: string;
   summary: string;
+}
+
+interface ProcessNode {
+  name: string;
+  value?: number;
+  children?: ProcessNode[];
 }
 
 interface SystemMetrics {
@@ -35,6 +43,7 @@ interface SystemMetrics {
 export const Dashboard: React.FC = () => {
   const [runs, setRuns] = useState<Run[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [selectedProcess, setSelectedProcess] = useState<ProcessNode | null>(null);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -71,6 +80,8 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     if (runs.length > 0) setLoading(false);
   }, [runs]);
+
+  const selectedRun = runs.find(r => r.id === selectedRunId);
 
   return (
     <div className="min-h-screen p-6 lg:p-10 max-w-[1600px] mx-auto space-y-8">
@@ -169,7 +180,7 @@ export const Dashboard: React.FC = () => {
           <div>
             <div className="metric-label">Active Alerts</div>
             <div className="metric-value text-rose-400">
-              {runs.length > 0 ? runs[0].summary.split('\n').filter(l => l.includes('CRITICAL')).length : '0'}
+              {selectedRun?.summary ? selectedRun.summary.split('\n').filter(l => l.includes('CRITICAL')).length : '0'}
             </div>
           </div>
         </motion.div>
@@ -179,7 +190,46 @@ export const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Process Tree (2/3 width) */}
         <div className="lg:col-span-2 space-y-6">
-          <ProcessTree />
+          <div className="relative">
+            <ProcessTree onSelectProcess={setSelectedProcess} />
+            
+            <AnimatePresence>
+              {selectedProcess && (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="absolute top-4 right-4 w-64 bg-slate-900/95 border border-slate-700 rounded-lg shadow-2xl p-4 backdrop-blur-md z-10"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-emerald-400" />
+                      <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Process Inspector</span>
+                    </div>
+                    <button onClick={() => setSelectedProcess(null)} className="text-slate-500 hover:text-white">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-[9px] text-slate-600 uppercase mb-1">Command</div>
+                      <div className="text-xs font-mono text-emerald-400 break-all">{selectedProcess.name}</div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">Weight</div>
+                        <div className="text-xs font-mono text-slate-300">{selectedProcess.value || 1}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">Children</div>
+                        <div className="text-xs font-mono text-slate-300">{selectedProcess.children?.length || 0}</div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {selectedRunId && (
@@ -187,12 +237,14 @@ export const Dashboard: React.FC = () => {
                 <MetricChart 
                   title="CPU Pressure (PSI)" 
                   runId={selectedRunId} 
+                  runMode={selectedRun?.mode || ''}
                   metricKey="CPU_PRESSURE" 
                   color="#3b82f6"
                 />
                 <MetricChart 
                   title="I/O Pressure (PSI)" 
                   runId={selectedRunId} 
+                  runMode={selectedRun?.mode || ''}
                   metricKey="IO_PRESSURE" 
                   color="#f59e0b"
                 />
@@ -214,12 +266,17 @@ export const Dashboard: React.FC = () => {
                 <button
                   key={run.id}
                   onClick={() => setSelectedRunId(run.id)}
-                  className={`w-full text-left p-3 rounded-md border transition-all duration-200 group ${
+                  className={`w-full text-left p-3 rounded-md border transition-all duration-200 group relative ${
                     selectedRunId === run.id 
-                      ? 'bg-emerald-500/10 border-emerald-500/30' 
+                      ? 'bg-emerald-500/10 border-emerald-500/30 ring-1 ring-emerald-500/20' 
                       : 'bg-slate-900/30 border-slate-800 hover:border-slate-700'
                   }`}
                 >
+                  {selectedRunId === run.id && (
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-md ${
+                      run.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-rose-500'
+                    }`} />
+                  )}
                   <div className="flex justify-between items-start mb-1">
                     <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
                       run.status === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
@@ -234,7 +291,11 @@ export const Dashboard: React.FC = () => {
                     Mode: {run.mode}
                   </div>
                   <div className="text-[10px] text-slate-500 line-clamp-2 italic">
-                    {run.summary || 'No summary recorded.'}
+                    {run.summary ? (
+                      run.summary.split('\n')[0]
+                    ) : (
+                      run.status === 'SUCCESS' ? 'System Integrity Verified (Baseline)' : 'No summary recorded.'
+                    )}
                   </div>
                 </button>
               ))}
@@ -247,25 +308,29 @@ export const Dashboard: React.FC = () => {
               <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Critical Findings</h3>
             </div>
             <div className="space-y-3">
-              {runs.find(r => r.id === selectedRunId)?.summary.split('\n').map((line, i) => (
-                line.trim() && (
-                  <div key={i} className="flex gap-3 p-3 rounded bg-rose-500/5 border border-rose-500/10">
-                    <div className="mt-0.5">
-                      {line.includes('CRITICAL') ? (
-                        <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
-                      ) : (
-                        <Activity className="w-3.5 h-3.5 text-amber-500" />
-                      )}
+              {selectedRun?.summary ? (
+                selectedRun.summary.split('\n').map((line, i) => (
+                  line.trim() && (
+                    <div key={i} className="flex gap-3 p-3 rounded bg-rose-500/5 border border-rose-500/10">
+                      <div className="mt-0.5">
+                        {line.includes('CRITICAL') ? (
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+                        ) : (
+                          <Activity className="w-3.5 h-3.5 text-amber-500" />
+                        )}
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-300 leading-relaxed">
+                        {line}
+                      </div>
                     </div>
-                    <div className="text-[11px] font-mono text-slate-300 leading-relaxed">
-                      {line}
-                    </div>
+                  )
+                ))
+              ) : (
+                <div className="text-center py-8 flex flex-col items-center gap-3">
+                  <Shield className="w-8 h-8 text-emerald-500/20" />
+                  <div className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">
+                    {selectedRun?.status === 'SUCCESS' ? 'System Healthy - No Anomalies' : 'No Anomalies Detected'}
                   </div>
-                )
-              ))}
-              {!runs.find(r => r.id === selectedRunId)?.summary && (
-                <div className="text-center py-8 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
-                  No Anomalies Detected
                 </div>
               )}
             </div>

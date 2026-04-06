@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { Activity, ZoomIn } from 'lucide-react';
+import { Activity, ZoomIn, RefreshCw } from 'lucide-react';
 
 interface MetricData {
   timestamp: string;
@@ -10,18 +10,28 @@ interface MetricData {
 interface MetricChartProps {
   title: string;
   runId: number;
+  runMode: string;
   metricKey: string;
   color?: string;
 }
 
-export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, metricKey, color = '#10b981' }) => {
+export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode, metricKey, color = '#10b981' }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<MetricData[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const isPressureMetric = metricKey.includes('PRESSURE');
+  const isMemModule = runMode.includes('MEM');
+  const isSkipped = isPressureMetric && isMemModule;
+
   useEffect(() => {
     const fetchData = async () => {
+      if (isSkipped) {
+        setData([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const response = await fetch(`/api/db/metrics/${runId}`);
@@ -41,7 +51,7 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, metricKe
     };
 
     fetchData();
-  }, [runId, metricKey]);
+  }, [runId, metricKey, isSkipped]);
 
   useEffect(() => {
     if (data.length === 0 || !svgRef.current || !containerRef.current) return;
@@ -154,9 +164,22 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, metricKe
           <Activity className="w-4 h-4 text-slate-400" style={{ color }} />
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</h3>
         </div>
-        <div className="flex items-center gap-1 text-[10px] font-mono text-slate-600">
-          <ZoomIn className="w-3 h-3" />
-          <span>Metric: {metricKey}</span>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              if (svgRef.current) {
+                d3.select(svgRef.current).transition().duration(750).call(d3.zoom().transform as any, d3.zoomIdentity);
+              }
+            }}
+            className="p-1 hover:bg-slate-800 rounded transition-colors text-slate-500 hover:text-emerald-400"
+            title="Reset Zoom"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+          <div className="flex items-center gap-1 text-[10px] font-mono text-slate-600">
+            <ZoomIn className="w-3 h-3" />
+            <span>Metric: {metricKey}</span>
+          </div>
         </div>
       </div>
       
@@ -164,6 +187,15 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, metricKe
         {loading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : isSkipped ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
+              Metric Not Captured
+            </div>
+            <div className="text-[9px] font-mono text-slate-600 italic">
+              PSI diagnostics are bypassed in {runMode} module to optimize forensic throughput.
+            </div>
           </div>
         ) : data.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center text-[10px] font-mono text-slate-600 uppercase">

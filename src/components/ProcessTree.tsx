@@ -8,7 +8,11 @@ interface ProcessNode {
   children?: ProcessNode[];
 }
 
-export const ProcessTree: React.FC = () => {
+interface ProcessTreeProps {
+  onSelectProcess?: (process: ProcessNode) => void;
+}
+
+export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ProcessNode | null>(null);
@@ -67,11 +71,13 @@ export const ProcessTree: React.FC = () => {
       .attr('fill', d => d.children ? '#1e293b' : color(d.parent?.data.name || 'root'))
       .attr('class', 'cursor-pointer hover:opacity-80 transition-opacity duration-200')
       .on('click', (event, d) => {
+        if (onSelectProcess) onSelectProcess(d.data);
         zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
       });
 
     cell.append('text')
       .attr('class', 'pointer-events-none fill-slate-300 text-[10px] font-mono')
+      .attr('opacity', d => (d.x1 - d.x0 > 50 && d.y1 - d.y0 > 25) ? 1 : 0)
       .selectAll('tspan')
       .data(d => d.data.name.split(/(?=[A-Z][^A-Z])/g).concat(d.value ? d.value.toString() : ''))
       .enter().append('tspan')
@@ -107,13 +113,35 @@ export const ProcessTree: React.FC = () => {
           <Maximize2 className="w-4 h-4 text-emerald-400" />
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Process Hierarchy Treemap</h3>
         </div>
-        <button 
-          onClick={fetchData}
-          className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
-          title="Refresh Data"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              if (data && svgRef.current) {
+                // To reset zoom, we just zoom to the root
+                const root = d3.hierarchy(data).sum(d => d.value || 1);
+                const width = containerRef.current?.clientWidth || 800;
+                const height = 500;
+                const treemap = d3.treemap<ProcessNode>().size([width, height]);
+                treemap(root);
+                // This is a bit hacky since zoom() is internal, 
+                // but we can trigger a re-render or expose it.
+                // For now, let's just re-fetch or re-render.
+                fetchData();
+              }
+            }}
+            className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
+            title="Reset Zoom"
+          >
+            <Minimize2 className="w-4 h-4" />
+          </button>
+          <button 
+            onClick={fetchData}
+            className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
+            title="Refresh Data"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
       
       <div className="relative overflow-hidden rounded bg-slate-950/50 border border-slate-800">
