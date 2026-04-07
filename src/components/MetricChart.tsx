@@ -13,9 +13,10 @@ interface MetricChartProps {
   runMode: string;
   metricKey: string;
   color?: string;
+  isLive?: boolean;
 }
 
-export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode, metricKey, color = '#10b981' }) => {
+export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode, metricKey, color = '#10b981', isLive = false }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<MetricData[]>([]);
@@ -25,33 +26,40 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
   const isMemModule = runMode.includes('MEM');
   const isSkipped = isPressureMetric && isMemModule;
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (isSkipped) {
-        setData([]);
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      try {
-        const response = await fetch(`/api/db/metrics/${runId}`);
-        const json = await response.json();
-        const filtered = json
-          .filter((m: any) => m.key === metricKey)
-          .map((m: any) => ({
-            timestamp: m.timestamp,
-            value: m.value
-          }));
-        setData(filtered);
-      } catch (error) {
-        console.error(`Failed to fetch metric ${metricKey}:`, error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const fetchData = async (showLoading = true) => {
+    if (isSkipped) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
+    if (showLoading) setLoading(true);
+    try {
+      const response = await fetch(`/api/db/metrics/${runId}`);
+      const json = await response.json();
+      const filtered = json
+        .filter((m: any) => m.key === metricKey)
+        .map((m: any) => ({
+          timestamp: m.timestamp,
+          value: m.value
+        }));
+      setData(filtered);
+    } catch (error) {
+      console.error(`Failed to fetch metric ${metricKey}:`, error);
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
 
-    fetchData();
+  useEffect(() => {
+    fetchData(true);
   }, [runId, metricKey, isSkipped]);
+
+  useEffect(() => {
+    if (isLive) {
+      const interval = setInterval(() => fetchData(false), 3000);
+      return () => clearInterval(interval);
+    }
+  }, [isLive, runId, metricKey]);
 
   useEffect(() => {
     if (data.length === 0 || !svgRef.current || !containerRef.current) return;
@@ -177,27 +185,7 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
             <RefreshCw className="w-3 h-3" />
           </button>
           <button 
-            onClick={() => {
-              const fetchData = async () => {
-                setLoading(true);
-                try {
-                  const response = await fetch(`/api/db/metrics/${runId}`);
-                  const json = await response.json();
-                  const filtered = json
-                    .filter((m: any) => m.key === metricKey)
-                    .map((m: any) => ({
-                      timestamp: m.timestamp,
-                      value: m.value
-                    }));
-                  setData(filtered);
-                } catch (error) {
-                  console.error(`Failed to fetch metric ${metricKey}:`, error);
-                } finally {
-                  setLoading(false);
-                }
-              };
-              fetchData();
-            }}
+            onClick={() => fetchData(true)}
             className="p-1 hover:bg-slate-800 rounded transition-colors text-slate-500 hover:text-emerald-400"
             title="Refresh Data"
           >

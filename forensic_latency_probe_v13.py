@@ -685,6 +685,8 @@ def run_probe(advanced=False, module=None):
         try:
             DatabaseManager.init_db()
             CURRENT_RUN_ID = DatabaseManager.start_run("ADVANCED" if advanced else ("MODULE:" + module if module else "STANDARD"))
+            print(f"[RUN_ID] {CURRENT_RUN_ID}")
+            sys.stdout.flush()
             
             enforce_compliance()
             

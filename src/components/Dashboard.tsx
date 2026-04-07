@@ -105,11 +105,11 @@ export const Dashboard: React.FC = () => {
     setShowTerminal(true);
     
     try {
-      const response = await fetch('/api/run-probe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ advanced })
+      const params = new URLSearchParams({
+        advanced: advanced.toString(),
       });
+      
+      const response = await fetch(`/api/run-probe?${params.toString()}`);
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -128,7 +128,24 @@ export const Dashboard: React.FC = () => {
             if (line.startsWith("data: ")) {
               try {
                 const json = JSON.parse(line.substring(6));
-                setProbeOutput(prev => [...prev, json.text].slice(-100));
+                const text = json.text;
+                
+                if (text.includes("[RUN_ID]")) {
+                  const runId = parseInt(text.split("[RUN_ID]")[1].trim());
+                  if (!isNaN(runId)) {
+                    setSelectedRunId(runId);
+                    // Add a placeholder run to the list so it's selectable
+                    setRuns(prev => [{
+                      id: runId,
+                      timestamp: new Date().toISOString(),
+                      mode: advanced ? "ADVANCED" : "STANDARD",
+                      status: "RUNNING",
+                      summary: "Audit in progress..."
+                    }, ...prev]);
+                  }
+                }
+                
+                setProbeOutput(prev => [...prev, text].slice(-100));
               } catch (e) {
                 console.error("Failed to parse SSE line", line);
               }
@@ -370,6 +387,7 @@ export const Dashboard: React.FC = () => {
                   runMode={selectedRun?.mode || ''}
                   metricKey="CPU_PRESSURE" 
                   color="#3b82f6"
+                  isLive={isProbing && selectedRunId === runs[0]?.id}
                 />
                 <MetricChart 
                   title="I/O Pressure (PSI)" 
@@ -377,6 +395,7 @@ export const Dashboard: React.FC = () => {
                   runMode={selectedRun?.mode || ''}
                   metricKey="IO_PRESSURE" 
                   color="#f59e0b"
+                  isLive={isProbing && selectedRunId === runs[0]?.id}
                 />
               </>
             )}

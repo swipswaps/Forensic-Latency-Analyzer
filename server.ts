@@ -192,26 +192,29 @@ async function startServer() {
     }
   });
 
-  app.post("/api/run-probe", (req, res) => {
-    const { advanced, loop, module } = req.body;
+  app.get("/api/run-probe", (req, res) => {
+    const { advanced, loop, module } = req.query;
     const args = ["forensic_latency_probe_v13.py"];
-    if (advanced) args.push("--advanced");
+    if (advanced === "true") args.push("--advanced");
     if (loop) args.push("--loop", loop.toString());
-    if (module) args.push("--module", module);
+    if (module) args.push("--module", module.toString());
 
     // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no"); // Disable buffering for Nginx
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
     const pythonProcess = spawn("python3", ["-u", ...args]);
 
     const sendSSE = (data: string) => {
-      // Format as SSE data
+      if (res.writableEnded) return;
       res.write(`data: ${JSON.stringify({ text: data })}\n\n`);
     };
+
+    // Send initial connection message
+    sendSSE("[SYSTEM] Connected to forensic probe stream...\n");
 
     pythonProcess.stdout.on("data", (data) => {
       sendSSE(data.toString());
@@ -224,18 +227,20 @@ async function startServer() {
     pythonProcess.on("close", (code, signal) => {
       const status = code !== null ? `CODE ${code}` : `SIGNAL ${signal}`;
       sendSSE(`\n[PROCESS COMPLETED WITH ${status}]\n`);
-      res.end();
+      if (!res.writableEnded) res.end();
     });
 
     pythonProcess.on("error", (err) => {
       sendSSE(`\n[ERROR] Failed to start process: ${err.message}\n`);
-      res.end();
+      if (!res.writableEnded) res.end();
     });
 
     // Cleanup if client disconnects
     req.on("close", () => {
       if (pythonProcess.exitCode === null) {
-        pythonProcess.kill();
+        console.log("Client disconnected, killing probe process...");
+        // We can't send SSE here because the response is closed
+        pythonProcess.kill("SIGKILL");
       }
     });
   });
