@@ -57,6 +57,19 @@ async function startServer() {
       message TEXT,
       FOREIGN KEY(run_id) REFERENCES runs(id)
     );
+    CREATE TABLE IF NOT EXISTS research_results (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id      INTEGER,
+      finding     TEXT,
+      query       TEXT,
+      source_url  TEXT,
+      source_title TEXT,
+      excerpt     TEXT,
+      remediation TEXT,
+      rank        INTEGER,
+      searched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(run_id) REFERENCES runs(id)
+    );
   `);
 
   app.get("/api/health", (req, res) => {
@@ -234,15 +247,10 @@ async function startServer() {
   });
 
   // ── /api/run-probe ──────────────────────────────────────────────────────────
-  // FIX: removed loop parameter. UI-triggered runs are always single-shot.
-  // The probe runs the full pipeline once and streams output via SSE.
-  // loop= was causing the probe to restart every 5 seconds indefinitely,
-  // which meant only the first (DEPS) iteration's output reached the client
-  // before the SSE stream became congested and the UI stopped updating.
-  // Fix 8: track the active probe process so Stop button can kill it
+  // Single-shot pipeline run — no loop parameter.
+  // Fix 8: track active probe so Stop button can SIGKILL it.
   let activeProbeProcess: ReturnType<typeof spawn> | null = null;
 
-  // Stop endpoint — kills the currently running probe
   app.get("/api/run-probe/stop", (req, res) => {
     if (activeProbeProcess && activeProbeProcess.exitCode === null) {
       activeProbeProcess.kill("SIGKILL");
@@ -255,8 +263,6 @@ async function startServer() {
 
   app.get("/api/run-probe", (req, res) => {
     const { advanced, module } = req.query;
-    // Note: loop is intentionally NOT read from query params here.
-    // If daemon/loop mode is ever needed, add a separate /api/run-probe-loop endpoint.
     const args = ["forensic_latency_probe_v13.py"];
     if (advanced === "true") args.push("--advanced");
     if (module) args.push("--module", module.toString());
@@ -301,7 +307,6 @@ async function startServer() {
   });
 
   // ── /api/signal-process ────────────────────────────────────────────────────
-  // Delegates to probe --signal mode so signal logic stays in one place.
   app.get("/api/signal-process", async (req, res) => {
     const { pid, signal: sig } = req.query;
     if (!pid || !sig) {
@@ -349,6 +354,82 @@ async function startServer() {
       if (!res.writableEnded) res.end();
     });
     req.on("close", () => { if (proc.exitCode === null) proc.kill("SIGKILL"); });
+  });
+
+  // ── /api/research ───────────────────────────────────────────────────────────
+  // Triggers research_engine.py which uses xvfb-run + real Firefox profile
+  // to search Google restricted to authoritative documentation sources.
+  // Results are written to the research_results SQLite table.
+  // Streams research_engine.py stdout as SSE so the UI can show progress.
+  app.get("/api/research", (req, res) => {
+    const { runId } = req.query;
+    if (!runId) {
+      return res.status(400).json({ error: "runId is required" });
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const sendSSE = (text: string) => {
+      if (res.writableEnded) return;
+      res.write(`data: ${JSON.stringify({ text })}\n\n`);
+    };
+
+    sendSSE(`[RESEARCH] Starting research for run ${runId}...\n`);
+
+    // Check selenium is installed before launching the full engine
+    const checkProc = spawn("python3", ["-c", "import selenium; print('selenium ok')"]);
+    let seleniumOk = false;
+
+    checkProc.stdout.on("data", (d: Buffer) => {
+      if (d.toString().includes("selenium ok")) seleniumOk = true;
+    });
+
+    checkProc.on("close", () => {
+      if (!seleniumOk) {
+        sendSSE("[RESEARCH:ERROR] selenium not installed.\n");
+        sendSSE("[RESEARCH:FIX] Run: pip install selenium beautifulsoup4 lxml --break-system-packages\n");
+        sendSSE("[RESEARCH:FIX] Then run: sudo dnf install geckodriver\n");
+        if (!res.writableEnded) res.end();
+        return;
+      }
+
+      const proc = spawn("python3", ["-u", "research_engine.py", "--run-id", runId.toString()]);
+
+      proc.stdout.on("data", (data: Buffer) => sendSSE(data.toString()));
+      proc.stderr.on("data", (data: Buffer) => sendSSE(`[STDERR] ${data.toString()}`));
+
+      proc.on("close", (code: number) => {
+        sendSSE(`\n[RESEARCH:COMPLETE] exit code ${code}\n`);
+        if (!res.writableEnded) res.end();
+      });
+
+      proc.on("error", (err: Error) => {
+        sendSSE(`\n[ERROR] ${err.message}\n`);
+        if (!res.writableEnded) res.end();
+      });
+
+      req.on("close", () => {
+        if (proc.exitCode === null) proc.kill("SIGKILL");
+      });
+    });
+  });
+
+  // ── /api/db/research/:runId ─────────────────────────────────────────────────
+  // Returns research results for a given run, ordered by rank.
+  // Called by ResearchPanel.tsx to populate the documentation results view.
+  app.get("/api/db/research/:runId", (req, res) => {
+    try {
+      const rows = db.prepare(
+        "SELECT * FROM research_results WHERE run_id = ? ORDER BY rank ASC"
+      ).all(req.params.runId);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/process-logs/:processName", async (req, res) => {
