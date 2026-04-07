@@ -119,7 +119,7 @@ export const Dashboard: React.FC = () => {
     setShowTerminal(true);
 
     try {
-      const params = new URLSearchParams({ advanced: advanced.toString(), loop: '5' });
+      const params = new URLSearchParams({ advanced: advanced.toString() });
       const response = await fetch(`/api/run-probe?${params.toString()}`);
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();

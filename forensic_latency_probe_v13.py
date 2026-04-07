@@ -898,8 +898,10 @@ def run_probe(advanced=False, module=None):
                 else:
                     print(f"[ERROR] Unknown module: {module}")
             else:
-                # Full pipeline
-                DependencyManager.ensure_deps()
+                # Full pipeline — DEPS verification handled by setup.sh at startup.
+                # Calling ensure_deps() here caused every Standard run to emit only
+                # DEPS output (short-circuiting on .deps_installed marker) and never
+                # reach doctor(), psi(), or any subsequent module.
                 doctor()
                 psi()
                 core_imbalance_check()

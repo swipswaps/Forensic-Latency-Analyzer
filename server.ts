@@ -31,7 +31,6 @@ async function startServer() {
 
   const db = new Database(DB_FILE);
 
-  // Idempotent Schema Initialization (Matching Python Probe)
   db.exec(`
     CREATE TABLE IF NOT EXISTS runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,36 +59,48 @@ async function startServer() {
     );
   `);
 
-  // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "13.2.6" });
+    res.json({ status: "ok", version: "13.3.0" });
   });
 
-  app.get("/api/system-metrics", (req, res) => {
-    const cpus = os.cpus();
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const loadAvg = os.loadavg();
-    const uptime = os.uptime();
+  app.get("/api/system-metrics", async (req, res) => {
+    try {
+      const cpus = os.cpus();
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+      const loadAvg = os.loadavg();
+      const uptime = os.uptime();
 
-    res.json({
-      cpus: cpus.map(cpu => ({
-        model: cpu.model,
-        speed: cpu.speed,
-        times: cpu.times
-      })),
-      memory: {
-        total: totalMem,
-        free: freeMem,
-        used: totalMem - freeMem,
-        percent: ((totalMem - freeMem) / totalMem) * 100
-      },
-      loadAvg,
-      uptime,
-      platform: os.platform(),
-      release: os.release(),
-      arch: os.arch()
-    });
+      let diskUsage = { total: 0, free: 0, used: 0, percent: 0 };
+      try {
+        const { stdout } = await execAsync("df -B1 / --output=size,used,avail,pcent | tail -n 1");
+        const parts = stdout.trim().split(/\s+/);
+        diskUsage = {
+          total: parseInt(parts[0]),
+          used: parseInt(parts[1]),
+          free: parseInt(parts[2]),
+          percent: parseInt(parts[3].replace("%", ""))
+        };
+      } catch (e) {}
+
+      res.json({
+        cpus,
+        memory: {
+          total: totalMem,
+          free: freeMem,
+          used: totalMem - freeMem,
+          percent: ((totalMem - freeMem) / totalMem) * 100
+        },
+        disk: diskUsage,
+        loadAvg,
+        uptime,
+        platform: os.platform(),
+        release: os.release(),
+        arch: os.arch()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/processes", async (req, res) => {
@@ -101,11 +112,7 @@ async function startServer() {
         const parts = line.split(/\s+/);
         const obj: any = {};
         headers.forEach((h, i) => {
-          if (i === headers.length - 1) {
-            obj[h] = parts.slice(i).join(" ");
-          } else {
-            obj[h] = parts[i];
-          }
+          obj[h] = i === headers.length - 1 ? parts.slice(i).join(" ") : parts[i];
         });
         return obj;
       });
@@ -148,17 +155,13 @@ async function startServer() {
     try {
       const { stdout: oomd } = await execAsync("systemctl is-active systemd-oomd || echo 'inactive'");
       diagnostics.oomd = oomd.trim();
-      
       const { stdout: dbus } = await execAsync("systemctl is-active dbus-broker || echo 'inactive'");
       diagnostics.dbus = dbus.trim();
-
       if (fs.existsSync("/proc/sys/kernel/random/entropy_avail")) {
         diagnostics.entropy = fs.readFileSync("/proc/sys/kernel/random/entropy_avail", "utf8").trim();
       }
-
       const { stdout: interrupts } = await execAsync("cat /proc/interrupts | head -n 20");
       diagnostics.interrupts = interrupts;
-
     } catch (err) {
       diagnostics.error = "Failed to fetch some diagnostics";
     }
@@ -175,20 +178,14 @@ async function startServer() {
         }
       }
 
-      // Live capture: use -axww for maximum compatibility and full width
-      // We'll skip the header manually to be safe across all ps versions
-      // Added stat and lstart for "other data" request
       const { stdout } = await execAsync("ps -axww -o ppid,pid,pcpu,pmem,stat,lstart,args");
       const lines = stdout.trim().split("\n");
       const nodes = new Map<string, any>();
-
-      // Skip the header line
       const dataLines = lines[0].toLowerCase().includes("pid") ? lines.slice(1) : lines;
 
       dataLines.forEach(line => {
         const parts = line.trim().split(/\s+/);
         if (parts.length < 11) return;
-        
         const ppid = parts[0];
         const pid = parts[1];
         const cpu = parseFloat(parts[2]) || 0;
@@ -196,43 +193,21 @@ async function startServer() {
         const stat = parts[4];
         const startTime = parts.slice(5, 10).join(" ");
         const args = parts.slice(10).join(" ");
-        
-        // Ensure we have a valid value for the treemap
         const value = Math.max(0.1, cpu + mem);
-        
-        nodes.set(pid, { 
-          name: args, 
-          children: [], 
-          value,
-          cpu,
-          mem,
-          pid,
-          ppid,
-          stat,
-          startTime
-        });
+        nodes.set(pid, { name: args, children: [], value, cpu, mem, pid, ppid, stat, startTime });
       });
 
-      const root: any = { 
-        name: "system-root", 
-        children: [], 
-        value: 0, 
-        version: "1.1", 
-        timestamp: new Date().toISOString()
-      };
-      
+      const root: any = { name: "system-root", children: [], value: 0, version: "1.1", timestamp: new Date().toISOString() };
+
       nodes.forEach((node, pid) => {
         const parent = nodes.get(node.ppid);
         if (parent && node.ppid !== pid) {
           parent.children.push(node);
         } else {
-          // Root-level or orphan (including cases where ppid is 0 or not found)
           root.children.push(node);
         }
       });
 
-      // Post-process to add [self] nodes for parents with children
-      // This ensures the parent's own resource usage is represented in the treemap
       const addSelfNodes = (node: any) => {
         if (node.children && node.children.length > 0) {
           const selfValue = node.value;
@@ -246,11 +221,10 @@ async function startServer() {
               isSelf: true
             });
           }
-          node.value = 0; // Parent value is now sum of children
+          node.value = 0;
           node.children.forEach(addSelfNodes);
         }
       };
-
       addSelfNodes(root);
       res.json(root);
     } catch (err) {
@@ -259,14 +233,20 @@ async function startServer() {
     }
   });
 
+  // ── /api/run-probe ──────────────────────────────────────────────────────────
+  // FIX: removed loop parameter. UI-triggered runs are always single-shot.
+  // The probe runs the full pipeline once and streams output via SSE.
+  // loop= was causing the probe to restart every 5 seconds indefinitely,
+  // which meant only the first (DEPS) iteration's output reached the client
+  // before the SSE stream became congested and the UI stopped updating.
   app.get("/api/run-probe", (req, res) => {
-    const { advanced, loop, module } = req.query;
+    const { advanced, module } = req.query;
+    // Note: loop is intentionally NOT read from query params here.
+    // If daemon/loop mode is ever needed, add a separate /api/run-probe-loop endpoint.
     const args = ["forensic_latency_probe_v13.py"];
     if (advanced === "true") args.push("--advanced");
-    if (loop) args.push("--loop", loop.toString());
     if (module) args.push("--module", module.toString());
 
-    // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -280,16 +260,10 @@ async function startServer() {
       res.write(`data: ${JSON.stringify({ text: data })}\n\n`);
     };
 
-    // Send initial connection message
     sendSSE("[SYSTEM] Connected to forensic probe stream...\n");
 
-    pythonProcess.stdout.on("data", (data) => {
-      sendSSE(data.toString());
-    });
-
-    pythonProcess.stderr.on("data", (data) => {
-      sendSSE(`[STDERR] ${data.toString()}`);
-    });
+    pythonProcess.stdout.on("data", (data) => sendSSE(data.toString()));
+    pythonProcess.stderr.on("data", (data) => sendSSE(`[STDERR] ${data.toString()}`));
 
     pythonProcess.on("close", (code, signal) => {
       const status = code !== null ? `CODE ${code}` : `SIGNAL ${signal}`;
@@ -302,32 +276,74 @@ async function startServer() {
       if (!res.writableEnded) res.end();
     });
 
-    // Cleanup if client disconnects
     req.on("close", () => {
       if (pythonProcess.exitCode === null) {
         console.log("Client disconnected, killing probe process...");
-        // We can't send SSE here because the response is closed
         pythonProcess.kill("SIGKILL");
       }
     });
   });
 
+  // ── /api/signal-process ────────────────────────────────────────────────────
+  // Delegates to probe --signal mode so signal logic stays in one place.
+  app.get("/api/signal-process", async (req, res) => {
+    const { pid, signal: sig } = req.query;
+    if (!pid || !sig) {
+      return res.status(400).json({ ok: false, message: "pid and signal are required" });
+    }
+    const allowed = ["STOP", "CONT", "KILL", "TERM"];
+    if (!allowed.includes(String(sig).toUpperCase())) {
+      return res.status(400).json({ ok: false, message: `signal must be one of ${allowed.join(", ")}` });
+    }
+    try {
+      const { stdout, stderr } = await execAsync(
+        `python3 forensic_latency_probe_v13.py --signal ${sig} --pid ${pid}`
+      );
+      const output = (stdout + stderr).trim();
+      const ok = output.includes("[SIGNAL:OK]");
+      res.json({ ok, message: output });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, message: err.message });
+    }
+  });
+
+  // ── /api/run-firefox-forensic ───────────────────────────────────────────────
+  app.get("/api/run-firefox-forensic", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const sendSSE = (data: string) => {
+      if (res.writableEnded) return;
+      res.write(`data: ${JSON.stringify({ text: data })}\n\n`);
+    };
+
+    sendSSE("[SYSTEM] Starting Firefox forensic sweep...\n");
+    const proc = spawn("python3", ["-u", "forensic_latency_probe_v13.py", "--module", "FIREFOX"]);
+    proc.stdout.on("data", (d) => sendSSE(d.toString()));
+    proc.stderr.on("data", (d) => sendSSE(`[STDERR] ${d.toString()}`));
+    proc.on("close", (code) => {
+      sendSSE(`\n[FIREFOX:COMPLETE] exit code ${code}\n`);
+      if (!res.writableEnded) res.end();
+    });
+    proc.on("error", (err) => {
+      sendSSE(`\n[ERROR] ${err.message}\n`);
+      if (!res.writableEnded) res.end();
+    });
+    req.on("close", () => { if (proc.exitCode === null) proc.kill("SIGKILL"); });
+  });
+
   app.get("/api/process-logs/:processName", async (req, res) => {
     try {
       const { pid } = req.query;
-      const processName = req.params.processName.split(" (")[0]; // Base name
-      
+      const processName = req.params.processName.split(" (")[0];
       const files = fs.readdirSync(LOG_DIR).filter(f => f.endsWith(".log")).sort().reverse();
       if (files.length === 0) return res.json({ logs: ["No logs found."] });
-      
       const latestLog = path.join(LOG_DIR, files[0]);
-      
-      // Search for either the process name or the PID
       let grepPattern = processName;
-      if (pid) {
-        grepPattern = `${processName}\\|${pid}`;
-      }
-      
+      if (pid) grepPattern = `${processName}\\|${pid}`;
       const { stdout } = await execAsync(`grep -i "${grepPattern}" "${latestLog}" | tail -n 50 || echo "No specific logs for ${processName} (PID: ${pid || 'N/A'})"`);
       res.json({ logs: stdout.split("\n").filter(l => l.trim().length > 0) });
     } catch (err: any) {
@@ -345,54 +361,9 @@ async function startServer() {
     }
   });
 
-  // Database Endpoints
-  // Ensure process_tree column exists for existing DBs
   try {
     db.exec("ALTER TABLE runs ADD COLUMN process_tree TEXT");
-  } catch (e) {
-    // Column already exists or table doesn't exist yet
-  }
-
-  app.get("/api/system-metrics", async (req, res) => {
-    try {
-      const cpus = os.cpus();
-      const totalMem = os.totalmem();
-      const freeMem = os.freemem();
-      const loadAvg = os.loadavg();
-      const uptime = os.uptime();
-      
-      // Get disk usage for root
-      let diskUsage = { total: 0, free: 0, used: 0, percent: 0 };
-      try {
-        const { stdout } = await execAsync("df -B1 / --output=size,used,avail,pcent | tail -n 1");
-        const parts = stdout.trim().split(/\s+/);
-        diskUsage = {
-          total: parseInt(parts[0]),
-          used: parseInt(parts[1]),
-          free: parseInt(parts[2]),
-          percent: parseInt(parts[3].replace("%", ""))
-        };
-      } catch (e) {}
-
-      res.json({
-        cpus,
-        memory: {
-          total: totalMem,
-          free: freeMem,
-          used: totalMem - freeMem,
-          percent: ((totalMem - freeMem) / totalMem) * 100
-        },
-        disk: diskUsage,
-        loadAvg,
-        uptime,
-        platform: os.platform(),
-        release: os.release(),
-        arch: os.arch()
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  } catch (e) {}
 
   app.get("/api/db/runs", (req, res) => {
     try {
@@ -415,9 +386,9 @@ async function startServer() {
   app.get("/api/db/alerts", (req, res) => {
     try {
       const rows = db.prepare(`
-        SELECT alerts.*, runs.timestamp as run_timestamp 
-        FROM alerts 
-        JOIN runs ON alerts.run_id = runs.id 
+        SELECT alerts.*, runs.timestamp as run_timestamp
+        FROM alerts
+        JOIN runs ON alerts.run_id = runs.id
         ORDER BY alerts.id DESC
       `).all();
       res.json(rows);
@@ -453,7 +424,6 @@ async function startServer() {
     try {
       const run = db.prepare("SELECT log_path FROM runs WHERE id = ?").get(req.params.runId) as any;
       if (!run || !run.log_path) return res.status(404).json({ error: "Log not found" });
-      
       if (fs.existsSync(run.log_path)) {
         const content = fs.readFileSync(run.log_path, "utf8");
         res.json({ logs: content.split("\n").filter(l => l.trim().length > 0) });
@@ -484,7 +454,6 @@ async function startServer() {
     res.sendFile(reportPath);
   });
 
-  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
