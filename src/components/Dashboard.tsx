@@ -11,9 +11,7 @@ import {
   Activity,
   Clock,
   HardDrive,
-  Info,
-  X,
-  RefreshCw
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -52,93 +50,28 @@ export const Dashboard: React.FC = () => {
   const [probeOutput, setProbeOutput] = useState<string[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
 
-  const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
-  const [runLogs, setRunLogs] = useState<string[]>([]);
-  const [loadingLogs, setLoadingLogs] = useState(false);
-  const [processes, setProcesses] = useState<any[]>([]);
+  const [historicalTree, setHistoricalTree] = useState<ProcessNode | null>(null);
 
-  const fetchProcesses = async () => {
+  const fetchHistoricalTree = async (runId: number) => {
     try {
-      const response = await fetch('/api/processes');
-      const data = await response.json();
-      setProcesses(data);
-    } catch (error) {
-      console.error('Failed to fetch processes:', error);
-    }
-  };
-
-  // Live log filtering
-  useEffect(() => {
-    if (isProbing && selectedProcess && probeOutput.length > 0) {
-      const lastChunk = probeOutput[probeOutput.length - 1];
-      const lines = lastChunk.split('\n');
-      const processName = selectedProcess.name.split(' (')[0].toLowerCase();
-      const pid = (selectedProcess as any).pid;
-
-      const relevantLines = lines.filter(line => {
-        const lowerLine = line.toLowerCase();
-        return lowerLine.includes(processName) || (pid && lowerLine.includes(pid));
-      });
-
-      if (relevantLines.length > 0) {
-        setSelectedProcessLogs(prev => [...prev, ...relevantLines].slice(-100));
+      const response = await fetch(`/api/db/process-tree/${runId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setHistoricalTree(data);
+      } else {
+        setHistoricalTree(null);
       }
-    }
-  }, [probeOutput, isProbing, selectedProcess]);
-
-  const fetchRunLogs = async (runId: number) => {
-    setLoadingLogs(true);
-    try {
-      const response = await fetch(`/api/db/logs/${runId}`);
-      const data = await response.json();
-      setRunLogs(data.logs || []);
     } catch (error) {
-      console.error('Failed to fetch run logs:', error);
-    } finally {
-      setLoadingLogs(false);
+      console.error('Failed to fetch historical tree:', error);
+      setHistoricalTree(null);
     }
   };
 
   useEffect(() => {
-    if (selectedRunId) {
-      fetchRunLogs(selectedRunId);
+    if (selectedRunId && !isProbing) {
+      fetchHistoricalTree(selectedRunId);
     }
-  }, [selectedRunId]);
-
-  const fetchProcessLogs = async (processName: string, pid?: string) => {
-    if (isProbing) return; // Use live stream instead
-    
-    setLoadingLogs(true);
-    try {
-      // If we have runLogs, filter them
-      if (runLogs.length > 0) {
-        const lowerName = processName.toLowerCase();
-        const filtered = runLogs.filter(line => {
-          const lowerLine = line.toLowerCase();
-          return lowerLine.includes(lowerName) || (pid && lowerLine.includes(pid));
-        });
-        setSelectedProcessLogs(filtered);
-        return;
-      }
-
-      const url = `/api/process-logs/${encodeURIComponent(processName)}${pid ? `?pid=${pid}` : ''}`;
-      const response = await fetch(url);
-      const data = await response.json();
-      setSelectedProcessLogs(data.logs || []);
-    } catch (error) {
-      console.error('Failed to fetch process logs:', error);
-    } finally {
-      setLoadingLogs(false);
-    }
-  };
-
-  useEffect(() => {
-    if (selectedProcess) {
-      const name = selectedProcess.name.split(' (')[0];
-      const pid = (selectedProcess as any).pid;
-      fetchProcessLogs(name, pid);
-    }
-  }, [selectedProcess, runLogs, isProbing]);
+  }, [selectedRunId, isProbing]);
 
   const fetchRuns = async () => {
     try {
@@ -255,10 +188,8 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchRuns();
     fetchSystemMetrics();
-    fetchProcesses();
     const interval = setInterval(() => {
       fetchSystemMetrics();
-      fetchProcesses();
     }, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -382,109 +313,11 @@ export const Dashboard: React.FC = () => {
                 onSelectProcess={setSelectedProcess} 
                 isProbing={isProbing} 
                 hotPids={hotPids}
+                historicalData={historicalTree}
+                selectedRunId={selectedRunId}
+                probeOutput={probeOutput}
               />
             </div>
-            
-            <AnimatePresence mode="wait">
-              {selectedProcess && (
-                <motion.div
-                  initial={{ opacity: 0, x: 20, width: 0 }}
-                  animate={{ opacity: 1, x: 0, width: '320px' }}
-                  exit={{ opacity: 0, x: 20, width: 0 }}
-                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                  className="min-w-[320px]"
-                >
-                  <div className="technical-panel p-4 h-full flex flex-col border-emerald-500/30 bg-emerald-500/5">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <Info className="w-4 h-4 text-emerald-400" />
-                        <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Process Inspector</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {isProbing && (
-                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-bold text-emerald-400 animate-pulse">
-                            <Activity className="w-2 h-2" />
-                            LIVE
-                          </div>
-                        )}
-                        <button onClick={() => setSelectedProcess(null)} className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors">
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 flex-1 flex flex-col">
-                      <div className="p-3 bg-black/40 rounded border border-slate-800">
-                        <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold">Full Command Path</div>
-                        <div className="text-xs font-mono text-emerald-400 break-all leading-relaxed">
-                          {processes.find(p => p.PID === (selectedProcess as any).pid)?.COMMAND || selectedProcess.name.split(' (')[0]}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
-                          <div className="text-[9px] text-slate-600 uppercase mb-1">CPU Load</div>
-                          <div className="text-sm font-mono text-blue-400 font-bold">{(selectedProcess as any).cpu || 0}%</div>
-                        </div>
-                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
-                          <div className="text-[9px] text-slate-600 uppercase mb-1">Memory</div>
-                          <div className="text-sm font-mono text-purple-400 font-bold">{(selectedProcess as any).mem || 0}%</div>
-                        </div>
-                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
-                          <div className="text-[9px] text-slate-600 uppercase mb-1">PID</div>
-                          <div className="text-sm font-mono text-slate-300">{(selectedProcess as any).pid || 'N/A'}</div>
-                        </div>
-                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
-                          <div className="text-[9px] text-slate-600 uppercase mb-1">Threads</div>
-                          <div className="text-sm font-mono text-slate-300">{selectedProcess.children?.length || 0}</div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex-1 flex flex-col min-h-0">
-                        <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
-                          <span className="flex items-center gap-1">
-                            <Terminal className="w-2.5 h-2.5" />
-                            Forensic Trace (Live)
-                          </span>
-                          {loadingLogs && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-500" />}
-                        </div>
-                        <div className="flex-1 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[9px] leading-tight">
-                          {selectedProcessLogs.length > 0 ? (
-                            selectedProcessLogs.map((log, i) => {
-                              const isError = log.includes('ERROR') || log.includes('CRITICAL') || log.includes('FAILED') || log.includes('LATENCY') || log.includes('WAIT');
-                              const isSuccess = log.includes('SUCCESS') || log.includes('OK');
-                              const isMetric = log.includes('[METRIC:');
-                              
-                              return (
-                                <div key={i} className={`mb-1.5 border-l-2 pl-2 py-1 ${
-                                  isError ? 'border-rose-500 text-rose-400 bg-rose-500/10' : 
-                                  isSuccess ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10' : 
-                                  isMetric ? 'border-blue-500 text-blue-400 bg-blue-500/10' :
-                                  'border-slate-800 text-slate-400'
-                                }`}>
-                                  <div className="flex justify-between items-center mb-0.5 opacity-40 text-[7px]">
-                                    <span>TRACE #{i.toString().padStart(3, '0')}</span>
-                                    <span>{new Date().toLocaleTimeString()}</span>
-                                  </div>
-                                  {log}
-                                </div>
-                              );
-                            })
-                          ) : (
-                            <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-3 py-10">
-                              <Activity className="w-6 h-6 opacity-10" />
-                              <span className="text-[10px] uppercase tracking-widest">
-                                {isProbing ? 'Waiting for live trace data...' : (selectedRunId ? 'No traces recorded for this run' : 'Select a process to inspect')}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

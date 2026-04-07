@@ -16,6 +16,7 @@ import time
 import re
 import sqlite3
 import signal
+import json
 from threading import Thread
 
 # =============================================================================
@@ -84,9 +85,16 @@ class DatabaseManager:
                     status TEXT,
                     log_path TEXT,
                     html_path TEXT,
-                    summary TEXT
+                    summary TEXT,
+                    process_tree TEXT
                 )
             """)
+            # Ensure process_tree column exists (for existing DBs)
+            try:
+                cursor.execute("ALTER TABLE runs ADD COLUMN process_tree TEXT")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+            
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,15 +135,21 @@ class DatabaseManager:
             return None
 
     @staticmethod
-    def update_run_status(run_id, status, log_path=None, html_path=None, summary=None):
+    def update_run_status(run_id, status, log_path=None, html_path=None, summary=None, process_tree=None):
         if not run_id: return
         try:
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE runs SET status = ?, log_path = ?, html_path = ?, summary = ? WHERE id = ?",
-                (status, log_path, html_path, summary, run_id)
-            )
+            if process_tree:
+                cursor.execute(
+                    "UPDATE runs SET status = ?, log_path = ?, html_path = ?, summary = ?, process_tree = ? WHERE id = ?",
+                    (status, log_path, html_path, summary, process_tree, run_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE runs SET status = ?, log_path = ?, html_path = ?, summary = ? WHERE id = ?",
+                    (status, log_path, html_path, summary, run_id)
+                )
             conn.commit()
             conn.close()
         except Exception:
@@ -635,6 +649,62 @@ def rank_root_causes():
         sev = "CRITICAL" if "CRITICAL" in line else ("WARNING" if "WARNING" in line else "INFO")
         DatabaseManager.log_alert(CURRENT_RUN_ID, sev, line)
 
+def capture_process_tree():
+    try:
+        # Get ppid, pid, %cpu, %mem, args
+        cmd = ["ps", "-axww", "-o", "ppid,pid,%cpu,%mem,args", "--no-headers"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        lines = result.stdout.strip().split("\n")
+        nodes = {}
+        
+        for line in lines:
+            parts = line.strip().split(None, 4)
+            if len(parts) < 5: continue
+            ppid, pid, cpu, mem, args = parts
+            
+            nodes[pid] = {
+                "name": args,
+                "children": [],
+                "value": max(0.1, float(cpu) + float(mem)),
+                "cpu": float(cpu),
+                "mem": float(mem),
+                "pid": pid,
+                "ppid": ppid
+            }
+            
+        root = {"name": "system-root", "children": [], "value": 0}
+        for pid, node in nodes.items():
+            parent = nodes.get(node["ppid"])
+            if parent and node["ppid"] != pid:
+                parent["children"].append(node)
+            else:
+                root["children"].append(node)
+                
+        # Add self nodes
+        def add_self(node):
+            if node["children"]:
+                self_val = node["value"]
+                if self_val > 0:
+                    node["children"].append({
+                        "name": f"[self] {node['name'].split()[0]}",
+                        "value": self_val,
+                        "cpu": node["cpu"],
+                        "mem": node["mem"],
+                        "pid": f"{node['pid']}-self",
+                        "isSelf": True
+                    })
+                node["value"] = 0
+                for child in node["children"]:
+                    if "isSelf" not in child:
+                        add_self(child)
+        
+        for child in root["children"]:
+            add_self(child)
+            
+        return json.dumps(root)
+    except Exception:
+        return None
+
 def generate_html_report():
     print(f"\n[MODULE:REPORT] GENERATING HTML DASHBOARD: {HTML_FILE}")
     html_content = f"""
@@ -686,6 +756,12 @@ def run_probe(advanced=False, module=None):
             DatabaseManager.init_db()
             CURRENT_RUN_ID = DatabaseManager.start_run("ADVANCED" if advanced else ("MODULE:" + module if module else "STANDARD"))
             print(f"[RUN_ID] {CURRENT_RUN_ID}")
+            
+            # Capture initial process tree for historical reconstruction
+            initial_tree = capture_process_tree()
+            if initial_tree:
+                DatabaseManager.update_run_status(CURRENT_RUN_ID, "RUNNING", process_tree=initial_tree)
+            
             sys.stdout.flush()
             
             enforce_compliance()

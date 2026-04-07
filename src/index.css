@@ -10,10 +10,19 @@
     50% { transform: scaleX(0.5); }
     100% { transform: scaleX(1); }
   }
+
+  @keyframes pulse-fast {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(0.98); }
+  }
 }
 
 body {
   @apply bg-slate-950 text-slate-100 font-sans antialiased;
+}
+
+.animate-pulse-fast {
+  animation: pulse-fast 0.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .animate-progress {

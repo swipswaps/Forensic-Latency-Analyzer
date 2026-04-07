@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { Maximize2, Minimize2, RefreshCw, Info, Activity, X, Terminal, Clock, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ProcessNode {
@@ -13,18 +13,100 @@ interface ProcessNode {
 }
 
 interface ProcessTreeProps {
-  onSelectProcess?: (process: ProcessNode) => void;
+  onSelectProcess?: (process: ProcessNode | null) => void;
   isProbing?: boolean;
   hotPids?: Set<string>;
+  historicalData?: ProcessNode | null;
+  selectedRunId?: number | null;
+  probeOutput?: string[];
 }
 
-export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing, hotPids }) => {
+export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing, hotPids, historicalData, selectedRunId, probeOutput }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ProcessNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [hoveredProcess, setHoveredProcess] = useState<ProcessNode | null>(null);
+  const [selectedProcess, setSelectedProcess] = useState<ProcessNode | null>(null);
   const [zoomStack, setZoomStack] = useState<d3.HierarchyRectangularNode<ProcessNode>[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<d3.HierarchyNode<ProcessNode>[]>([]);
+  
+  const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [runLogs, setRunLogs] = useState<string[]>([]);
+
+  const fetchRunLogs = async (runId: number) => {
+    setLoadingLogs(true);
+    try {
+      const response = await fetch(`/api/db/logs/${runId}`);
+      const data = await response.json();
+      setRunLogs(data.logs || []);
+    } catch (error) {
+      console.error('Failed to fetch run logs:', error);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedRunId) {
+      fetchRunLogs(selectedRunId);
+    }
+  }, [selectedRunId]);
+
+  const fetchProcessLogs = async (processName: string, pid?: string) => {
+    if (isProbing) return; 
+    
+    setLoadingLogs(true);
+    try {
+      if (runLogs.length > 0) {
+        const lowerName = processName.toLowerCase();
+        const filtered = runLogs.filter(line => {
+          const lowerLine = line.toLowerCase();
+          return lowerLine.includes(lowerName) || (pid && lowerLine.includes(pid));
+        });
+        setSelectedProcessLogs(filtered);
+        return;
+      }
+
+      const url = `/api/process-logs/${encodeURIComponent(processName)}${pid ? `?pid=${pid}` : ''}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      setSelectedProcessLogs(data.logs || []);
+    } catch (error) {
+      console.error('Failed to fetch process logs:', error);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedProcess) {
+      const name = selectedProcess.name.split(' (')[0];
+      const pid = (selectedProcess as any).pid;
+      fetchProcessLogs(name, pid);
+    }
+  }, [selectedProcess, runLogs, isProbing]);
+
+  // Live log filtering
+  useEffect(() => {
+    if (isProbing && selectedProcess && probeOutput && probeOutput.length > 0) {
+      const lastChunk = probeOutput[probeOutput.length - 1];
+      const lines = lastChunk.split('\n');
+      const processName = selectedProcess.name.split(' (')[0].toLowerCase();
+      const pid = (selectedProcess as any).pid;
+
+      const relevantLines = lines.filter(line => {
+        const lowerLine = line.toLowerCase();
+        return lowerLine.includes(processName) || (pid && lowerLine.includes(pid));
+      });
+
+      if (relevantLines.length > 0) {
+        setSelectedProcessLogs(prev => [...prev, ...relevantLines].slice(-100));
+      }
+    }
+  }, [probeOutput, isProbing, selectedProcess]);
 
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -40,15 +122,20 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (historicalData) {
+      setData(historicalData);
+      setLoading(false);
+    } else {
+      fetchData();
+    }
+  }, [historicalData]);
 
   useEffect(() => {
-    if (isProbing) {
+    if (isProbing && !historicalData) {
       const interval = setInterval(() => fetchData(true), 10000);
       return () => clearInterval(interval);
     }
-  }, [isProbing]);
+  }, [isProbing, historicalData]);
 
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
@@ -235,26 +322,102 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 3 : 1)
       .attr('class', d => {
         let classes = 'transition-all duration-300 hover:brightness-125';
-        if (hotPids?.has(d.data.pid || '')) classes += ' animate-pulse';
+        if (hotPids?.has(d.data.pid || '')) classes += ' animate-pulse-fast shadow-[0_0_15px_rgba(239,68,68,0.5)]';
+        if ((d.data as any).isSelf) classes += ' opacity-80';
         return classes;
       });
   }, [hotPids]);
 
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    if (!query.trim() || !data) {
+      setSearchResults([]);
+      return;
+    }
+
+    const root = d3.hierarchy(data);
+    const results = root.descendants().filter(d => 
+      d.data.pid?.toString().includes(query) || 
+      d.data.name.toLowerCase().includes(query.toLowerCase())
+    );
+    setSearchResults(results);
+  };
+
+  const jumpToNode = (node: d3.HierarchyNode<ProcessNode>) => {
+    if (node.parent) {
+      setZoomStack([node.parent as d3.HierarchyRectangularNode<ProcessNode>]);
+    } else {
+      setZoomStack([]);
+    }
+    setSearchQuery('');
+    setSearchResults([]);
+    
+    if (onSelectProcess) onSelectProcess(node.data);
+    setSelectedProcess(node.data);
+  };
+
   return (
-    <div className="technical-panel p-4" ref={containerRef} id="process-tree-container">
-      <div className="flex items-center justify-between mb-4 relative h-8">
+    <div className="technical-panel p-4 relative overflow-hidden" ref={containerRef} id="process-tree-container">
+      <div className="flex items-center justify-between mb-4 relative h-8 z-10">
         <div className="flex items-center gap-2">
           <Maximize2 className="w-4 h-4 text-emerald-400" />
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Process Hierarchy Treemap</h3>
-          {isProbing && (
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+            {historicalData ? 'Historical Process Snapshot' : 'Process Hierarchy Treemap'}
+          </h3>
+          {isProbing && !historicalData && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-bold text-emerald-400 animate-pulse ml-2">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               LIVE DATA STREAM
             </div>
           )}
+          {historicalData && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-[8px] font-bold text-blue-400 ml-2">
+              HISTORICAL VIEW
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search PID or Process..."
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 w-48 transition-all"
+            />
+            <AnimatePresence>
+              {searchResults.length > 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded shadow-2xl z-[100] max-h-64 overflow-y-auto custom-scrollbar"
+                >
+                  {searchResults.map((result, i) => (
+                    <button
+                      key={`${result.data.pid}-${i}`}
+                      onClick={() => jumpToNode(result)}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-800 border-b border-slate-800 last:border-0 flex flex-col gap-0.5"
+                    >
+                      <div className="text-[10px] font-mono text-emerald-400">PID: {result.data.pid}</div>
+                      <div className="text-[10px] text-slate-300 truncate">{result.data.name}</div>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {!historicalData && (
+            <button 
+              onClick={() => fetchData()} 
+              className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-emerald-400 transition-colors"
+              title="Refresh Process Tree"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          )}
           <AnimatePresence>
             {hoveredProcess && (
               <motion.div 
@@ -305,13 +468,86 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
             </div>
           </div>
         ) : (
-          <svg 
-            ref={svgRef} 
-            width="100%" 
-            height="500" 
-            className="w-full h-full"
-            viewBox={`0 0 ${containerRef.current?.clientWidth || 800} 500`}
-          />
+          <div className="relative h-[500px]">
+            <svg 
+              ref={svgRef} 
+              width="100%" 
+              height="500" 
+              className="w-full h-full"
+              viewBox={`0 0 ${containerRef.current?.clientWidth || 800} 500`}
+            />
+            
+            <AnimatePresence>
+              {selectedProcess && (
+                <motion.div
+                  initial={{ opacity: 0, x: 100 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 100 }}
+                  className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900/95 border-l border-slate-800 backdrop-blur-md z-20 shadow-2xl flex flex-col"
+                >
+                  <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-emerald-500/5">
+                    <div className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-emerald-400" />
+                      <span className="text-[10px] font-mono text-slate-300 uppercase tracking-widest">Inspector</span>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setSelectedProcess(null);
+                        if (onSelectProcess) onSelectProcess(null);
+                      }} 
+                      className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                    <div className="p-3 bg-black/40 rounded border border-slate-800">
+                      <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold">Command</div>
+                      <div className="text-xs font-mono text-emerald-400 break-all leading-relaxed">
+                        {selectedProcess.name}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">CPU</div>
+                        <div className="text-sm font-mono text-blue-400 font-bold">{(selectedProcess as any).cpu || 0}%</div>
+                      </div>
+                      <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">MEM</div>
+                        <div className="text-sm font-mono text-purple-400 font-bold">{(selectedProcess as any).mem || 0}%</div>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col min-h-0">
+                      <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Terminal className="w-2.5 h-2.5" />
+                          Forensic Trace
+                        </span>
+                        {loadingLogs && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-500" />}
+                      </div>
+                      <div className="flex-1 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[9px] leading-tight min-h-[200px]">
+                        {selectedProcessLogs.length > 0 ? (
+                          selectedProcessLogs.map((log, i) => (
+                            <div key={i} className="mb-1.5 border-l-2 border-slate-800 pl-2 py-1 text-slate-400">
+                              {log}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2 py-10">
+                            <Activity className="w-4 h-4 opacity-10" />
+                            <span className="text-[8px] uppercase tracking-widest">No traces recorded</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         )}
       </div>
       

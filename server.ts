@@ -40,7 +40,8 @@ async function startServer() {
       status TEXT,
       log_path TEXT,
       html_path TEXT,
-      summary TEXT
+      summary TEXT,
+      process_tree TEXT
     );
     CREATE TABLE IF NOT EXISTS metrics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,11 +167,11 @@ async function startServer() {
 
   app.get("/api/process-tree", async (req, res) => {
     try {
-      // Get detailed process info: ppid, pid, %cpu, %mem, comm
-      const { stdout } = await execAsync("ps -ax -o ppid,pid,%cpu,%mem,comm --no-headers");
+      // Get detailed process info: ppid, pid, %cpu, %mem, args
+      // Using -ww for wide output to get full arguments
+      const { stdout } = await execAsync("ps -axww -o ppid,pid,%cpu,%mem,args --no-headers");
       const lines = stdout.trim().split("\n");
-      const nodes: any = {};
-      const tree: any = { name: "root", children: [], value: 0 };
+      const nodes = new Map<string, any>();
 
       lines.forEach(line => {
         const parts = line.trim().split(/\s+/);
@@ -179,36 +180,57 @@ async function startServer() {
         const pid = parts[1];
         const cpu = parseFloat(parts[2]);
         const mem = parseFloat(parts[3]);
-        const comm = parts.slice(4).join(" ");
+        const args = parts.slice(4).join(" ");
         
         // Use a combination of CPU and Memory for the "value" (size) of the block
         // We add a small baseline (0.1) so idle processes are still visible
         const value = Math.max(0.1, cpu + mem);
         
-        nodes[pid] = { 
-          name: `${comm} (${pid})`, 
+        nodes.set(pid, { 
+          name: args, 
           children: [], 
           value,
           cpu,
           mem,
-          pid
-        };
+          pid,
+          ppid
+        });
       });
 
-      lines.forEach(line => {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 2) return;
-        const ppid = parts[0];
-        const pid = parts[1];
-        
-        if (nodes[ppid] && nodes[pid] && ppid !== pid) {
-          nodes[ppid].children.push(nodes[pid]);
-        } else if (nodes[pid]) {
-          tree.children.push(nodes[pid]);
+      const root: any = { name: "system-root", children: [], value: 0 };
+      
+      nodes.forEach((node, pid) => {
+        const parent = nodes.get(node.ppid);
+        if (parent && node.ppid !== pid) {
+          parent.children.push(node);
+        } else {
+          root.children.push(node);
         }
       });
 
-      res.json(tree);
+      // Post-process to add [self] nodes for parents with children
+      // This ensures the parent's own resource usage is represented in the treemap
+      const addSelfNodes = (node: any) => {
+        if (node.children && node.children.length > 0) {
+          const selfValue = node.value;
+          if (selfValue > 0) {
+            node.children.push({
+              name: `[self] ${node.name.split(' ')[0]}`,
+              value: selfValue,
+              cpu: node.cpu,
+              mem: node.mem,
+              pid: `${node.pid}-self`,
+              isSelf: true
+            });
+          }
+          node.value = 0; // Parent value is now sum of children
+          node.children.forEach(addSelfNodes);
+        }
+      };
+
+      root.children.forEach(addSelfNodes);
+
+      res.json(root);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -301,6 +323,13 @@ async function startServer() {
   });
 
   // Database Endpoints
+  // Ensure process_tree column exists for existing DBs
+  try {
+    db.exec("ALTER TABLE runs ADD COLUMN process_tree TEXT");
+  } catch (e) {
+    // Column already exists or table doesn't exist yet
+  }
+
   app.get("/api/system-metrics", async (req, res) => {
     try {
       const cpus = os.cpus();
@@ -378,6 +407,20 @@ async function startServer() {
     try {
       const rows = db.prepare("SELECT * FROM alerts WHERE run_id = ?").all(req.params.runId);
       res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/db/process-tree/:runId", async (req, res) => {
+    const { runId } = req.params;
+    try {
+      const run = db.prepare("SELECT process_tree FROM runs WHERE id = ?").get(runId) as any;
+      if (run && run.process_tree) {
+        res.json(JSON.parse(run.process_tree));
+      } else {
+        res.status(404).json({ error: "Process tree not found for this run" });
+      }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
