@@ -301,6 +301,47 @@ async function startServer() {
   });
 
   // Database Endpoints
+  app.get("/api/system-metrics", async (req, res) => {
+    try {
+      const cpus = os.cpus();
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+      const loadAvg = os.loadavg();
+      const uptime = os.uptime();
+      
+      // Get disk usage for root
+      let diskUsage = { total: 0, free: 0, used: 0, percent: 0 };
+      try {
+        const { stdout } = await execAsync("df -B1 / --output=size,used,avail,pcent | tail -n 1");
+        const parts = stdout.trim().split(/\s+/);
+        diskUsage = {
+          total: parseInt(parts[0]),
+          used: parseInt(parts[1]),
+          free: parseInt(parts[2]),
+          percent: parseInt(parts[3].replace("%", ""))
+        };
+      } catch (e) {}
+
+      res.json({
+        cpus,
+        memory: {
+          total: totalMem,
+          free: freeMem,
+          used: totalMem - freeMem,
+          percent: ((totalMem - freeMem) / totalMem) * 100
+        },
+        disk: diskUsage,
+        loadAvg,
+        uptime,
+        platform: os.platform(),
+        release: os.release(),
+        arch: os.arch()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/db/runs", (req, res) => {
     try {
       const rows = db.prepare("SELECT * FROM runs ORDER BY id DESC LIMIT 50").all();
@@ -337,6 +378,22 @@ async function startServer() {
     try {
       const rows = db.prepare("SELECT * FROM alerts WHERE run_id = ?").all(req.params.runId);
       res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/db/logs/:runId", async (req, res) => {
+    try {
+      const run = db.prepare("SELECT log_path FROM runs WHERE id = ?").get(req.params.runId) as any;
+      if (!run || !run.log_path) return res.status(404).json({ error: "Log not found" });
+      
+      if (fs.existsSync(run.log_path)) {
+        const content = fs.readFileSync(run.log_path, "utf8");
+        res.json({ logs: content.split("\n").filter(l => l.trim().length > 0) });
+      } else {
+        res.status(404).json({ error: "Log file missing on disk" });
+      }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

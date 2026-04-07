@@ -42,6 +42,7 @@ interface SystemMetrics {
     times: { user: number; nice: number; sys: number; idle: number; irq: number; }; 
   }[];
   memory: { total: number; free: number; used: number; percent: number };
+  disk: { total: number; used: number; free: number; percent: number };
   loadAvg: number[];
   uptime: number;
   platform: string;
@@ -79,7 +80,7 @@ export default function SystemTransparency() {
           time: now,
           cpu: parseFloat(cpuAvg.toFixed(1)),
           mem: parseFloat(data.memory.percent.toFixed(1)),
-          disk: Math.random() * 20 + 40, // Simulated disk pressure for visual
+          disk: data.disk.percent,
           load: data.loadAvg[0]
         }].slice(-20);
         return newHistory;
@@ -154,7 +155,14 @@ export default function SystemTransparency() {
           progress={metrics.memory.percent}
         />
         <StatCard 
-          icon={<Gauge className="w-4 h-4 text-amber-400" />}
+          icon={<HardDrive className="w-4 h-4 text-amber-400" />}
+          label="Disk Usage"
+          value={`${metrics.disk.percent}%`}
+          subValue={`${formatBytes(metrics.disk.used)} / ${formatBytes(metrics.disk.total)}`}
+          progress={metrics.disk.percent}
+        />
+        <StatCard 
+          icon={<Gauge className="w-4 h-4 text-blue-400" />}
           label="Load Average"
           value={metrics.loadAvg[0].toFixed(2)}
           subValue={`${metrics.loadAvg[1].toFixed(2)} (5m) • ${metrics.loadAvg[2].toFixed(2)} (15m)`}
@@ -349,7 +357,7 @@ export default function SystemTransparency() {
           <InventoryItem 
             label="Memory Topology" 
             value={`${formatBytes(metrics.memory.total)} Total`} 
-            subValue="ECC Enabled • DDR4-3200"
+            subValue="System Memory Hierarchy"
           />
         </div>
       </div>

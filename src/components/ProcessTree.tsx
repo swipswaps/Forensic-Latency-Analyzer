@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Maximize2, Minimize2, RefreshCw } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface ProcessNode {
   name: string;
@@ -53,16 +53,11 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
 
-    const updateTreemap = (isResize = false) => {
+    const updateTreemap = () => {
       if (!containerRef.current || !svgRef.current) return;
       const width = containerRef.current.clientWidth;
       const height = 500;
-
       const svg = d3.select(svgRef.current);
-      
-      // If it's just a resize and we have a zoom stack, we might want to preserve the zoom
-      // But for simplicity, we'll rebuild and re-apply zoom if needed
-      svg.selectAll('*').remove();
 
       const root = d3.hierarchy(data)
         .sum(d => d.value || 0.1)
@@ -81,36 +76,42 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         .domain([1, 5, 10, 25, 50])
         .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444']);
 
-      // Add gradients
-      const defs = svg.append('defs');
+      // Manage gradients
+      let defs = svg.select('defs');
+      if (defs.empty()) defs = svg.append('defs');
       
-      root.descendants().forEach((d, i) => {
-        const gradientId = `gradient-${i}`;
+      const gradientData = root.descendants();
+      const gradients = defs.selectAll('linearGradient')
+        .data(gradientData, (d: any) => d.data.pid || d.data.name);
+
+      gradients.exit().remove();
+
+      const gradientsEnter = gradients.enter().append('linearGradient')
+        .attr('id', (d, i) => `gradient-${d.data.pid || i}`)
+        .attr('x1', '0%')
+        .attr('y1', '0%')
+        .attr('x2', '100%')
+        .attr('y2', '100%');
+
+      gradientsEnter.append('stop').attr('offset', '0%').attr('stop-opacity', 0.9);
+      gradientsEnter.append('stop').attr('offset', '100%').attr('stop-opacity', 1);
+
+      gradients.merge(gradientsEnter as any).each(function(d) {
         const cpu = d.data.cpu || 0;
         const baseColor = d.children ? '#0f172a' : color(cpu);
-        
-        const gradient = defs.append('linearGradient')
-          .attr('id', gradientId)
-          .attr('x1', '0%')
-          .attr('y1', '0%')
-          .attr('x2', '100%')
-          .attr('y2', '100%');
-
-        gradient.append('stop')
-          .attr('offset', '0%')
-          .attr('stop-color', baseColor)
-          .attr('stop-opacity', 0.9);
-
-        gradient.append('stop')
-          .attr('offset', '100%')
-          .attr('stop-color', d3.color(baseColor)?.darker(1.5).toString() || baseColor)
-          .attr('stop-opacity', 1);
+        const g = d3.select(this);
+        g.select('stop:first-child').attr('stop-color', baseColor);
+        g.select('stop:last-child').attr('stop-color', d3.color(baseColor)?.darker(1.5).toString() || baseColor);
       });
 
-      const cell = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g')
-        .data(root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[])
-        .enter().append('g')
-        .attr('transform', d => `translate(${d.x0},${d.y0})`)
+      // Manage cells
+      const cellData = root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[];
+      const cells = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g.process-node-group')
+        .data(cellData, (d: any) => d.data.pid || d.data.name);
+
+      cells.exit().remove();
+
+      const cellsEnter = cells.enter().append('g')
         .attr('class', 'process-node-group cursor-pointer')
         .on('mouseenter', (event, d) => {
           setHoveredProcess(d.data);
@@ -127,36 +128,41 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           }
         });
 
-      cell.append('rect')
+      cellsEnter.append('rect')
         .attr('id', d => `rect-${d.data.name.replace(/[^\w]/g, '-')}`)
-        .attr('width', d => d.x1 - d.x0)
-        .attr('height', d => d.y1 - d.y0)
-        .attr('fill', (d, i) => `url(#gradient-${i})`)
-        .attr('stroke', d => {
-          if (hotPids?.has(d.data.pid || '')) return '#ef4444';
-          return d.children ? '#334155' : '#0f172a';
-        })
-        .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 3 : 1)
-        .attr('class', d => {
-          let classes = 'transition-all duration-300 hover:brightness-125';
-          if (hotPids?.has(d.data.pid || '')) classes += ' animate-pulse';
-          return classes;
-        })
         .style('transition', 'fill 0.3s, stroke 0.3s');
 
-      cell.append('text')
-        .attr('class', 'pointer-events-none fill-white/90 text-[10px] font-mono font-bold')
+      cellsEnter.append('text')
+        .attr('class', 'pointer-events-none fill-white/90 text-[10px] font-mono font-bold');
+
+      const cellsMerged = cells.merge(cellsEnter as any);
+
+      cellsMerged.transition().duration(500)
+        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+
+      cellsMerged.select('rect')
+        .attr('width', d => d.x1 - d.x0)
+        .attr('height', d => d.y1 - d.y0)
+        .attr('fill', (d, i) => `url(#gradient-${d.data.pid || i})`)
+        .attr('stroke', d => d.children ? '#334155' : '#0f172a')
+        .attr('stroke-width', 1);
+
+      cellsMerged.select('text')
         .attr('opacity', d => (d.x1 - d.x0 > 60 && d.y1 - d.y0 > 25) ? 1 : 0)
-        .selectAll('tspan')
-        .data(d => {
+        .each(function(d) {
+          const t = d3.select(this);
           const name = d.data.name.split(' (')[0];
           const cpu = d.data.cpu ? `${d.data.cpu}%` : '';
-          return [name, cpu];
-        })
-        .enter().append('tspan')
-        .attr('x', 8)
-        .attr('y', (d, i) => 18 + i * 12)
-        .text(d => String(d));
+          const lines = [name, cpu];
+          
+          const tspans = t.selectAll('tspan').data(lines);
+          tspans.exit().remove();
+          tspans.enter().append('tspan')
+            .attr('x', 8)
+            .merge(tspans as any)
+            .attr('y', (d, i) => 18 + i * 12)
+            .text(d => String(d));
+        });
 
       function zoom(d: d3.HierarchyRectangularNode<ProcessNode>, duration = 750) {
         const kx = width / (d.x1 - d.x0);
@@ -166,7 +172,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
 
         const t = svg.transition().duration(duration).ease(d3.easeCubicInOut);
 
-        svg.selectAll('g').transition(t)
+        svg.selectAll('g.process-node-group').transition(t)
           .attr('transform', (node: any) => `translate(${(node.x0 - x) * kx},${(node.y0 - y) * ky})`);
 
         svg.selectAll('rect').transition(t)
@@ -185,24 +191,16 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       // If we were zoomed in, re-apply zoom immediately without transition
       if (zoomStack.length > 0) {
         const lastZoom = zoomStack[zoomStack.length - 1];
-        // We need to find the equivalent node in the NEW root hierarchy
         const targetNode = root.descendants().find(n => n.data.name === lastZoom.data.name);
         if (targetNode) {
           zoom(targetNode as d3.HierarchyRectangularNode<ProcessNode>, 0);
         }
       }
 
-      (window as any).zoomTreemapToNode = (nodeName: string) => {
-        const targetNode = root.descendants().find(n => n.data.name === nodeName);
-        if (targetNode) {
-          zoom(targetNode as d3.HierarchyRectangularNode<ProcessNode>);
-        }
-      };
-
       (window as any).resetTreemapZoom = () => {
         setZoomStack([]);
         const t = svg.transition().duration(750).ease(d3.easeCubicInOut);
-        svg.selectAll('g').transition(t).attr('transform', d => `translate(${(d as any).x0},${(d as any).y0})`);
+        svg.selectAll('g.process-node-group').transition(t).attr('transform', d => `translate(${(d as any).x0},${(d as any).y0})`);
         svg.selectAll('rect').transition(t).attr('width', d => (d as any).x1 - (d as any).x0).attr('height', d => (d as any).y1 - (d as any).y0);
         svg.selectAll('text').transition(t).attr('opacity', d => ((d as any).x1 - (d as any).x0 > 60 && (d as any).y1 - (d as any).y0 > 25) ? 1 : 0);
       };
@@ -213,7 +211,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
     let timeout: NodeJS.Timeout;
     const resizeObserver = new ResizeObserver(() => {
       clearTimeout(timeout);
-      timeout = setTimeout(() => updateTreemap(true), 100);
+      timeout = setTimeout(() => updateTreemap(), 200);
     });
     resizeObserver.observe(containerRef.current);
 
@@ -221,11 +219,30 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       resizeObserver.disconnect();
       clearTimeout(timeout);
     };
-  }, [data, hotPids]);
+  }, [data]);
+
+  // Separate effect for hotPids to avoid layout jittering
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const svg = d3.select(svgRef.current);
+    
+    svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g.process-node-group')
+      .select('rect')
+      .attr('stroke', d => {
+        if (hotPids?.has(d.data.pid || '')) return '#ef4444';
+        return d.children ? '#334155' : '#0f172a';
+      })
+      .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 3 : 1)
+      .attr('class', d => {
+        let classes = 'transition-all duration-300 hover:brightness-125';
+        if (hotPids?.has(d.data.pid || '')) classes += ' animate-pulse';
+        return classes;
+      });
+  }, [hotPids]);
 
   return (
     <div className="technical-panel p-4" ref={containerRef} id="process-tree-container">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 relative h-8">
         <div className="flex items-center gap-2">
           <Maximize2 className="w-4 h-4 text-emerald-400" />
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Process Hierarchy Treemap</h3>
@@ -236,39 +253,46 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2 min-h-[32px]">
-          {hoveredProcess && (
-            <motion.div 
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-900/80 border border-emerald-500/20 rounded-lg text-[10px] font-mono shadow-lg shadow-emerald-500/5"
+        
+        <div className="flex items-center gap-2">
+          <AnimatePresence>
+            {hoveredProcess && (
+              <motion.div 
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-900/90 border border-emerald-500/20 rounded-lg text-[10px] font-mono shadow-xl shadow-black/50 backdrop-blur-sm absolute right-24 top-0 z-20"
+              >
+                <span className="text-slate-500 uppercase tracking-widest text-[8px]">Inspecting:</span>
+                <span className="text-emerald-400 font-bold truncate max-w-[120px]">{hoveredProcess.name.split(' (')[0]}</span>
+                <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
+                  <span className="text-blue-400">{hoveredProcess.cpu}%</span>
+                  <span className="text-purple-400">{hoveredProcess.mem}%</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => {
+                if ((window as any).resetTreemapZoom) {
+                  (window as any).resetTreemapZoom();
+                }
+              }}
+              className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
+              title="Reset Zoom"
             >
-              <span className="text-slate-500 uppercase tracking-widest text-[8px]">Inspecting:</span>
-              <span className="text-emerald-400 font-bold">{hoveredProcess.name.split(' (')[0]}</span>
-              <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
-                <span className="text-blue-400">{hoveredProcess.cpu}% CPU</span>
-                <span className="text-purple-400">{hoveredProcess.mem}% MEM</span>
-              </div>
-            </motion.div>
-          )}
-          <button 
-            onClick={() => {
-              if ((window as any).resetTreemapZoom) {
-                (window as any).resetTreemapZoom();
-              }
-            }}
-            className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
-            title="Reset Zoom"
-          >
-            <Minimize2 className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => fetchData()}
-            className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
-            title="Refresh Data"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+              <Minimize2 className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => fetchData()}
+              className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
+              title="Refresh Data"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
       

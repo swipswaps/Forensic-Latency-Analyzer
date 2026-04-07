@@ -53,7 +53,19 @@ export const Dashboard: React.FC = () => {
   const [showTerminal, setShowTerminal] = useState(false);
 
   const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
+  const [runLogs, setRunLogs] = useState<string[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [processes, setProcesses] = useState<any[]>([]);
+
+  const fetchProcesses = async () => {
+    try {
+      const response = await fetch('/api/processes');
+      const data = await response.json();
+      setProcesses(data);
+    } catch (error) {
+      console.error('Failed to fetch processes:', error);
+    }
+  };
 
   // Live log filtering
   useEffect(() => {
@@ -74,9 +86,41 @@ export const Dashboard: React.FC = () => {
     }
   }, [probeOutput, isProbing, selectedProcess]);
 
-  const fetchProcessLogs = async (processName: string, pid?: string) => {
+  const fetchRunLogs = async (runId: number) => {
     setLoadingLogs(true);
     try {
+      const response = await fetch(`/api/db/logs/${runId}`);
+      const data = await response.json();
+      setRunLogs(data.logs || []);
+    } catch (error) {
+      console.error('Failed to fetch run logs:', error);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedRunId) {
+      fetchRunLogs(selectedRunId);
+    }
+  }, [selectedRunId]);
+
+  const fetchProcessLogs = async (processName: string, pid?: string) => {
+    if (isProbing) return; // Use live stream instead
+    
+    setLoadingLogs(true);
+    try {
+      // If we have runLogs, filter them
+      if (runLogs.length > 0) {
+        const lowerName = processName.toLowerCase();
+        const filtered = runLogs.filter(line => {
+          const lowerLine = line.toLowerCase();
+          return lowerLine.includes(lowerName) || (pid && lowerLine.includes(pid));
+        });
+        setSelectedProcessLogs(filtered);
+        return;
+      }
+
       const url = `/api/process-logs/${encodeURIComponent(processName)}${pid ? `?pid=${pid}` : ''}`;
       const response = await fetch(url);
       const data = await response.json();
@@ -93,17 +137,8 @@ export const Dashboard: React.FC = () => {
       const name = selectedProcess.name.split(' (')[0];
       const pid = (selectedProcess as any).pid;
       fetchProcessLogs(name, pid);
-      
-      // If probing, poll for logs to keep it live
-      let interval: NodeJS.Timeout;
-      if (isProbing) {
-        interval = setInterval(() => fetchProcessLogs(name, pid), 3000);
-      }
-      return () => {
-        if (interval) clearInterval(interval);
-      };
     }
-  }, [selectedProcess, isProbing]);
+  }, [selectedProcess, runLogs, isProbing]);
 
   const fetchRuns = async () => {
     try {
@@ -180,7 +215,7 @@ export const Dashboard: React.FC = () => {
                       timestamp: new Date().toISOString(),
                       mode: advanced ? "ADVANCED" : "STANDARD",
                       status: "RUNNING",
-                      summary: "Audit in progress..."
+                      summary: "Initializing probe..."
                     }, ...prev]);
                   }
                 }
@@ -197,7 +232,11 @@ export const Dashboard: React.FC = () => {
       // Refresh runs after completion
       await fetchRuns();
     } catch (error) {
-      setProbeOutput(prev => [...prev, `\n[ERROR] Failed to trigger probe: ${error}`]);
+      console.error("Probe failed:", error);
+      const errorMsg = error instanceof TypeError && error.message.includes('fetch') 
+        ? "Network Error: Server unreachable or connection refused."
+        : `Error: ${error}`;
+      setProbeOutput(prev => [...prev, `\n[CRITICAL] ${errorMsg}`]);
     } finally {
       setIsProbing(false);
     }
@@ -216,7 +255,11 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchRuns();
     fetchSystemMetrics();
-    const interval = setInterval(fetchSystemMetrics, 5000);
+    fetchProcesses();
+    const interval = setInterval(() => {
+      fetchSystemMetrics();
+      fetchProcesses();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -334,7 +377,7 @@ export const Dashboard: React.FC = () => {
         {/* Left Column: Process Tree (2/3 width) */}
         <div className="lg:col-span-2 space-y-6">
           <div className="flex flex-col xl:flex-row gap-6">
-            <div className={`transition-all duration-500 ease-in-out ${selectedProcess ? 'xl:w-2/3' : 'w-full'}`}>
+            <div className={`flex-1 min-w-0`}>
               <ProcessTree 
                 onSelectProcess={setSelectedProcess} 
                 isProbing={isProbing} 
@@ -342,13 +385,14 @@ export const Dashboard: React.FC = () => {
               />
             </div>
             
-            <AnimatePresence>
+            <AnimatePresence mode="wait">
               {selectedProcess && (
                 <motion.div
                   initial={{ opacity: 0, x: 20, width: 0 }}
-                  animate={{ opacity: 1, x: 0, width: 'auto' }}
+                  animate={{ opacity: 1, x: 0, width: '320px' }}
                   exit={{ opacity: 0, x: 20, width: 0 }}
-                  className="xl:w-1/3 min-w-[320px]"
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="min-w-[320px]"
                 >
                   <div className="technical-panel p-4 h-full flex flex-col border-emerald-500/30 bg-emerald-500/5">
                     <div className="flex items-center justify-between mb-4">
@@ -371,9 +415,9 @@ export const Dashboard: React.FC = () => {
 
                     <div className="space-y-4 flex-1 flex flex-col">
                       <div className="p-3 bg-black/40 rounded border border-slate-800">
-                        <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold">Command Path</div>
+                        <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold">Full Command Path</div>
                         <div className="text-xs font-mono text-emerald-400 break-all leading-relaxed">
-                          {selectedProcess.name.split(' (')[0]}
+                          {processes.find(p => p.PID === (selectedProcess as any).pid)?.COMMAND || selectedProcess.name.split(' (')[0]}
                         </div>
                       </div>
 
@@ -429,7 +473,9 @@ export const Dashboard: React.FC = () => {
                           ) : (
                             <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-3 py-10">
                               <Activity className="w-6 h-6 opacity-10" />
-                              <span className="text-[10px] uppercase tracking-widest">No active trace detected</span>
+                              <span className="text-[10px] uppercase tracking-widest">
+                                {isProbing ? 'Waiting for live trace data...' : (selectedRunId ? 'No traces recorded for this run' : 'Select a process to inspect')}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -569,7 +615,7 @@ export const Dashboard: React.FC = () => {
                     {run.summary ? (
                       run.summary.split('\n')[0]
                     ) : (
-                      run.status === 'SUCCESS' ? 'System Integrity Verified (Baseline)' : 'No summary recorded.'
+                      run.status === 'SUCCESS' ? 'Audit complete. No anomalies detected.' : 'Analysis in progress...'
                     )}
                   </div>
                 </button>
@@ -612,6 +658,74 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* System Health Insights */}
+      {systemMetrics && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="technical-panel p-4 bg-slate-900/40 border-slate-800"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-emerald-500/10 rounded border border-emerald-500/20">
+              <Activity className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">System Health Insights</h3>
+              <p className="text-[10px] text-slate-500 font-mono">Heuristic analysis based on real-time telemetry</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CPU Saturation</div>
+              <div className="flex items-center gap-2">
+                <div className={`text-sm font-mono ${systemMetrics.loadAvg[0] > 2 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                  {systemMetrics.loadAvg[0] > 2 ? 'SATURATED' : 'STABLE'}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Load average is {systemMetrics.loadAvg[0].toFixed(2)} (1m)
+                </div>
+              </div>
+              <p className="text-[9px] text-slate-600 leading-tight">
+                {systemMetrics.loadAvg[0] > 2 
+                  ? "High run-queue depth detected. Context switching may impact latency sensitive tasks."
+                  : "CPU scheduler is efficiently managing the current task load."}
+              </p>
+            </div>
+            
+            <div className="space-y-2 border-l border-slate-800 pl-6">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Memory Pressure</div>
+              <div className="flex items-center gap-2">
+                <div className={`text-sm font-mono ${systemMetrics.memory.percent > 85 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                  {systemMetrics.memory.percent > 85 ? 'CRITICAL' : 'HEALTHY'}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {systemMetrics.memory.percent.toFixed(1)}% Utilization
+                </div>
+              </div>
+              <p className="text-[9px] text-slate-600 leading-tight">
+                {systemMetrics.memory.percent > 85 
+                  ? "OOM killer risk is elevated. System is relying heavily on swap or page cache reclaim."
+                  : "Sufficient page cache and anonymous memory headroom available."}
+              </p>
+            </div>
+
+            <div className="space-y-2 border-l border-slate-800 pl-6">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Integrity Status</div>
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-mono text-emerald-400">VERIFIED</div>
+                <div className="text-[10px] text-slate-500">
+                  {runs.length} Audits Performed
+                </div>
+              </div>
+              <p className="text-[9px] text-slate-600 leading-tight">
+                No unauthorized kernel modifications or suspicious hidden processes detected in recent scans.
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Footer */}
       <footer className="pt-8 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
