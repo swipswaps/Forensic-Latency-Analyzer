@@ -32,6 +32,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   const [zoomStack, setZoomStack] = useState<d3.HierarchyRectangularNode<ProcessNode>[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<d3.HierarchyNode<ProcessNode>[]>([]);
+  const [colorMode, setColorMode] = useState<'cpu' | 'mem'>('cpu');
   
   const valueCache = useRef<Map<string, number>>(new Map());
   const searchIndex = useRef<Map<string, d3.HierarchyNode<ProcessNode>>>(new Map());
@@ -254,9 +255,13 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         });
         searchIndex.current = index;
 
-        const color = d3.scaleThreshold<number, string>()
-          .domain([1, 5, 10, 25, 50])
-          .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444']);
+        const color = colorMode === 'cpu' 
+          ? d3.scaleThreshold<number, string>()
+              .domain([1, 5, 10, 25, 50])
+              .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444'])
+          : d3.scaleThreshold<number, string>()
+              .domain([1, 5, 10, 20, 40])
+              .range(['#1e293b', '#334155', '#475569', '#8b5cf6', '#d946ef', '#ec4899']);
 
         // Manage gradients
         let defs = svg.select('defs');
@@ -283,9 +288,9 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         gradientsEnter.append('stop').attr('offset', '100%').attr('stop-opacity', 1);
 
         gradients.merge(gradientsEnter as any).each(function(d) {
-          const cpu = d.data.cpu || 0;
+          const val = colorMode === 'cpu' ? (d.data.cpu || 0) : (d.data.mem || 0);
           const isParent = d.children && d.children.length > 0;
-          const baseColor = isParent ? '#0f172a' : color(cpu);
+          const baseColor = isParent ? '#0f172a' : color(val);
           const g = d3.select(this);
           g.select('stop:first-child').attr('stop-color', baseColor);
           g.select('stop:last-child').attr('stop-color', d3.color(baseColor)?.darker(1.5).toString() || baseColor);
@@ -336,16 +341,30 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           .attr('width', d => d.x1 - d.x0)
           .attr('height', d => d.y1 - d.y0)
           .attr('fill', (d, i) => `url(#gradient-${d.data.pid || i})`)
-          .attr('stroke', d => (d.children && d.children.length > 0) ? '#334155' : '#0f172a')
-          .attr('stroke-width', 1);
+          .attr('stroke', d => {
+            if (hotPids?.has(d.data.pid || '')) return '#ef4444';
+            return (d.children && d.children.length > 0) ? '#334155' : '#0f172a';
+          })
+          .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 2 : 1)
+          .style('opacity', d => {
+            if (!searchQuery) return 1;
+            const matches = d.data.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          (d.data.pid && d.data.pid.toString().includes(searchQuery));
+            return matches ? 1 : 0.2;
+          });
 
         cellsMerged.select('text')
-          .attr('opacity', d => (d.x1 - d.x0 > 60 && d.y1 - d.y0 > 25) ? 1 : 0)
+          .attr('opacity', d => {
+            const matchesSearch = !searchQuery || 
+                                d.data.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                (d.data.pid && d.data.pid.toString().includes(searchQuery));
+            return (matchesSearch && d.x1 - d.x0 > 60 && d.y1 - d.y0 > 25) ? 1 : 0;
+          })
           .each(function(d) {
             const t = d3.select(this);
             const name = d.data.name.split(' (')[0];
-            const cpu = d.data.cpu ? `${d.data.cpu}%` : '';
-            const lines = [name, cpu];
+            const val = colorMode === 'cpu' ? (d.data.cpu ? `${d.data.cpu}%` : '') : (d.data.mem ? `${d.data.mem}%` : '');
+            const lines = [name, val];
             
             const tspans = t.selectAll('tspan').data(lines);
             tspans.exit().remove();
@@ -470,109 +489,120 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   };
 
   return (
-    <div className="technical-panel p-4 relative overflow-hidden" ref={containerRef} id="process-tree-container">
-      <div className="flex items-center justify-between mb-4 relative h-8 z-10">
-        <div className="flex items-center gap-2">
-          <Maximize2 className="w-4 h-4 text-emerald-400" />
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-            {historicalData ? 'Historical Process Snapshot' : 'Process Hierarchy Treemap'}
-          </h3>
-          {isProbing && !historicalData && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-bold text-emerald-400 animate-pulse ml-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              LIVE DATA STREAM
-            </div>
-          )}
-          {historicalData && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-[8px] font-bold text-blue-400 ml-2">
-              HISTORICAL VIEW
-            </div>
-          )}
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search PID or Process..."
-              value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 w-48 transition-all"
-            />
-            <AnimatePresence>
-              {searchResults.length > 0 && (
-                <motion.div 
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded shadow-2xl z-[100] max-h-64 overflow-y-auto custom-scrollbar"
-                >
-                  {searchResults.map((result, i) => (
-                    <button
-                      key={`${result.data.pid}-${i}`}
-                      onClick={() => jumpToNode(result)}
-                      className="w-full text-left px-3 py-2 hover:bg-slate-800 border-b border-slate-800 last:border-0 flex flex-col gap-0.5"
-                    >
-                      <div className="text-[10px] font-mono text-emerald-400">PID: {result.data.pid}</div>
-                      <div className="text-[10px] text-slate-300 truncate">{result.data.name}</div>
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {!historicalData && (
-            <button 
-              onClick={() => fetchData()} 
-              className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-emerald-400 transition-colors"
-              title="Refresh Process Tree"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          )}
-          <AnimatePresence>
-            {hoveredProcess && (
-              <motion.div 
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 10 }}
-                className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-900/90 border border-emerald-500/20 rounded-lg text-[10px] font-mono shadow-xl shadow-black/50 backdrop-blur-sm absolute right-24 top-0 z-20"
-              >
-                <span className="text-slate-500 uppercase tracking-widest text-[8px]">Inspecting:</span>
-                <span className="text-emerald-400 font-bold truncate max-w-[120px]">{hoveredProcess.name.split(' (')[0]}</span>
-                <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
-                  <span className="text-blue-400">{hoveredProcess.cpu}%</span>
-                  <span className="text-purple-400">{hoveredProcess.mem}%</span>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          
+    <div className="technical-panel p-4 relative overflow-hidden flex flex-col" ref={containerRef} id="process-tree-container">
+      <div className="flex flex-col gap-4 mb-4 relative z-10">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => {
-                if ((window as any).resetTreemapZoom) {
-                  (window as any).resetTreemapZoom();
-                }
-              }}
-              className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
-              title="Reset Zoom"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={() => fetchData()}
-              className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
-              title="Refresh Data"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
+            <Maximize2 className="w-4 h-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+              {historicalData ? 'Historical Process Snapshot' : 'Process Hierarchy Treemap'}
+            </h3>
+            {isProbing && !historicalData && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-bold text-emerald-400 animate-pulse ml-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                LIVE DATA STREAM
+              </div>
+            )}
           </div>
+          
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-slate-900 rounded-md p-0.5 border border-slate-800">
+              <button 
+                onClick={() => setColorMode('cpu')}
+                className={`px-3 py-1 text-[10px] font-mono rounded transition-all ${colorMode === 'cpu' ? 'bg-blue-500/20 text-blue-400 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                CPU
+              </button>
+              <button 
+                onClick={() => setColorMode('mem')}
+                className={`px-3 py-1 text-[10px] font-mono rounded transition-all ${colorMode === 'mem' ? 'bg-purple-500/20 text-purple-400 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                MEM
+              </button>
+            </div>
+
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search PID or Process..."
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 w-48 transition-all"
+              />
+              <AnimatePresence>
+                {searchResults.length > 0 && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded shadow-2xl z-[100] max-h-64 overflow-y-auto custom-scrollbar"
+                  >
+                    {searchResults.map((result, i) => (
+                      <button
+                        key={`${result.data.pid}-${i}`}
+                        onClick={() => jumpToNode(result)}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-800 border-b border-slate-800 last:border-0 flex flex-col gap-0.5"
+                      >
+                        <div className="text-[10px] font-mono text-emerald-400">PID: {result.data.pid}</div>
+                        <div className="text-[10px] text-slate-300 truncate">{result.data.name}</div>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => (window as any).resetTreemapZoom?.()}
+                className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
+                title="Reset Zoom"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+              {!historicalData && (
+                <button 
+                  onClick={() => fetchData()} 
+                  className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
+                  title="Refresh Data"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap py-1 border-y border-slate-800/50">
+          <Shield className="w-3 h-3 text-slate-600 shrink-0" />
+          <span className="text-[10px] font-mono text-slate-600 uppercase tracking-tighter">Path:</span>
+          <button 
+            onClick={() => (window as any).resetTreemapZoom?.()}
+            className="text-[10px] font-mono text-emerald-500/70 hover:text-emerald-400 transition-colors"
+          >
+            root
+          </button>
+          {zoomStack.map((node, i) => (
+            <React.Fragment key={i}>
+              <span className="text-slate-800 text-[10px]">/</span>
+              <button 
+                onClick={() => {
+                  const newStack = zoomStack.slice(0, i + 1);
+                  setZoomStack(newStack);
+                  if ((window as any).zoomTreemapToNode) {
+                    (window as any).zoomTreemapToNode(node.data.name);
+                  }
+                }}
+                className="text-[10px] font-mono text-emerald-500/70 hover:text-emerald-400 transition-colors max-w-[120px] truncate"
+              >
+                {node.data.name.split(' (')[0]}
+              </button>
+            </React.Fragment>
+          ))}
         </div>
       </div>
       
-      <div className="relative overflow-hidden rounded bg-slate-950/50 border border-slate-800">
+      <div className="relative flex-1 overflow-hidden rounded bg-slate-950/50 border border-slate-800">
         {loading && !data ? (
           <div className="h-[500px] flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
@@ -616,9 +646,48 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                   
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                     <div className="p-3 bg-black/40 rounded border border-slate-800">
-                      <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold">Command</div>
+                      <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold flex items-center justify-between">
+                        <span>Command</span>
+                        <span className="text-[8px] opacity-50 font-normal">PID: {(selectedProcess as any).pid}</span>
+                      </div>
                       <div className="text-xs font-mono text-emerald-400 break-all leading-relaxed">
                         {selectedProcess.name}
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-slate-900/30 rounded border border-slate-800/50">
+                      <div className="text-[9px] text-slate-600 uppercase mb-2 font-bold">Latency Risk Assessment</div>
+                      <div className="flex items-center gap-3">
+                        {(() => {
+                          const cpu = (selectedProcess as any).cpu || 0;
+                          const stat = (selectedProcess as any).stat || '';
+                          const isHot = hotPids?.has((selectedProcess as any).pid || '');
+                          
+                          let risk = 'Low';
+                          let color = 'text-emerald-400';
+                          let bg = 'bg-emerald-500/10';
+                          
+                          if (stat.includes('D') || cpu > 90) {
+                            risk = 'Critical';
+                            color = 'text-red-400';
+                            bg = 'bg-red-500/20';
+                          } else if (cpu > 50 || (isHot && cpu > 20)) {
+                            risk = 'High';
+                            color = 'text-orange-400';
+                            bg = 'bg-orange-500/15';
+                          } else if (isHot || cpu > 10) {
+                            risk = 'Moderate';
+                            color = 'text-amber-400';
+                            bg = 'bg-amber-500/10';
+                          }
+                          
+                          return (
+                            <div className={`flex-1 flex items-center justify-between px-3 py-2 rounded ${bg} border border-white/5`}>
+                              <span className={`text-xs font-bold uppercase tracking-tighter ${color}`}>{risk}</span>
+                              <Activity className={`w-4 h-4 ${color} ${risk !== 'Low' ? 'animate-pulse' : ''}`} />
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -667,17 +736,31 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                       </div>
                       <div className="flex-1 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[9px] leading-tight min-h-[200px]">
                         {showFullLog ? (
-                          (isProbing ? probeOutput.flatMap(c => c.split('\n')) : runLogs).map((log, i) => (
-                            <div key={i} className="mb-1 text-slate-500 hover:text-slate-300 transition-colors">
-                              {log}
-                            </div>
-                          ))
+                          (isProbing ? probeOutput.flatMap(c => c.split('\n')) : runLogs).map((log, i) => {
+                            const isModule = log.includes('[MODULE:');
+                            const isMetric = log.includes('[METRIC:');
+                            const isError = log.includes('[ERROR]') || log.includes('[CRITICAL]');
+                            
+                            return (
+                              <div key={i} className={`mb-1 transition-colors ${
+                                isModule ? 'text-emerald-400 font-bold border-l border-emerald-500/50 pl-1' : 
+                                isMetric ? 'text-blue-400' :
+                                isError ? 'text-red-400' :
+                                'text-slate-500 hover:text-slate-300'
+                              }`}>
+                                {log}
+                              </div>
+                            );
+                          })
                         ) : selectedProcessLogs.length > 0 ? (
-                          selectedProcessLogs.map((log, i) => (
-                            <div key={i} className="mb-1.5 border-l-2 border-slate-800 pl-2 py-1 text-slate-400">
-                              {log}
-                            </div>
-                          ))
+                          selectedProcessLogs.map((log, i) => {
+                            const isMetric = log.includes('[METRIC:');
+                            return (
+                              <div key={i} className={`mb-1.5 border-l-2 border-slate-800 pl-2 py-1 ${isMetric ? 'text-blue-400' : 'text-slate-400'}`}>
+                                {log}
+                              </div>
+                            );
+                          })
                         ) : (
                           <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2 py-10 px-4 text-center">
                             <Activity className="w-4 h-4 opacity-10" />
@@ -700,40 +783,31 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         )}
       </div>
       
-      <div className="mt-3 flex items-center gap-4 text-[10px] font-mono text-slate-500">
-        <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap max-w-[50%]">
-          <span className="text-slate-600">PATH:</span>
-          <span className="text-emerald-500/50 cursor-pointer hover:text-emerald-400" onClick={() => (window as any).resetTreemapZoom?.()}>root</span>
-          {zoomStack.map((node, i) => (
-            <React.Fragment key={i}>
-              <span className="text-slate-800">/</span>
-              <span className="text-emerald-500/50 cursor-pointer hover:text-emerald-400" onClick={() => {
-                const newStack = zoomStack.slice(0, i + 1);
-                setZoomStack(newStack);
-                if ((window as any).zoomTreemapToNode) {
-                  (window as any).zoomTreemapToNode(node.data.name);
-                }
-              }}>
-                {node.data.name.split(' (')[0]}
-              </span>
-            </React.Fragment>
-          ))}
+      <div className="mt-3 flex items-center gap-4 text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-sm bg-slate-800 border border-slate-700" />
+            <span>Idle</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-sm bg-blue-600" />
+            <span>Active</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-sm bg-red-600" />
+            <span>Hot</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 ml-auto">
-          <div className="w-2 h-2 rounded-full bg-slate-700" />
-          <span>Idle</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-blue-500" />
-          <span>Active</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-red-500" />
-          <span>Hot</span>
-        </div>
-        <div className="ml-auto flex items-center gap-1">
+        
+        <div className="h-3 w-px bg-slate-800 mx-2" />
+        
+        <div className="flex items-center gap-1">
           <Minimize2 className="w-3 h-3" />
-          <span>Click to Zoom / Select</span>
+          <span>Click to Zoom</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Info className="w-3 h-3" />
+          <span>Select for Forensic Trace</span>
         </div>
       </div>
     </div>

@@ -42,6 +42,7 @@ interface SystemMetrics {
 
 export const Dashboard: React.FC = () => {
   const [runs, setRuns] = useState<Run[]>([]);
+  const [runSearch, setRunSearch] = useState('');
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [selectedProcess, setSelectedProcess] = useState<ProcessNode | null>(null);
   const [hotPids, setHotPids] = useState<Set<string>>(new Set());
@@ -199,10 +200,39 @@ export const Dashboard: React.FC = () => {
     if (runs.length > 0) setLoading(false);
   }, [runs]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedProcess(null);
+        (window as any).resetTreemapZoom?.();
+      }
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault();
+        const searchInput = document.querySelector('input[placeholder="Search PID or Process..."]') as HTMLInputElement;
+        searchInput?.focus();
+      }
+      if (e.key.toLowerCase() === 'r' && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault();
+        (window as any).refreshTreemapData?.();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const selectedRun = runs.find(r => r.id === selectedRunId);
+  const filteredRuns = runs.filter(r => 
+    r.mode.toLowerCase().includes(runSearch.toLowerCase()) || 
+    r.id.toString().includes(runSearch) ||
+    (r.summary && r.summary.toLowerCase().includes(runSearch.toLowerCase()))
+  );
 
   return (
-    <div className="min-h-screen p-6 lg:p-10 max-w-[1600px] mx-auto space-y-8">
+    <div className="min-h-screen p-6 lg:p-10 max-w-[1600px] mx-auto space-y-8 relative">
+      {/* Global Scanline Overlay */}
+      <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] bg-[length:100%_3px,4px_100%] z-[9999] opacity-20" />
+      
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-800 pb-8">
         <div className="space-y-1">
@@ -221,10 +251,17 @@ export const Dashboard: React.FC = () => {
         
         <div className="flex items-center gap-6 font-mono text-[10px] uppercase tracking-widest text-slate-500">
           <div className="flex flex-col items-end">
-            <span className="text-slate-600">Status</span>
-            <span className="text-emerald-400 flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Operational
+            <span className="text-slate-600">System Health</span>
+            <span className={`flex items-center gap-1.5 font-bold ${
+              (systemMetrics?.loadAvg[0] || 0) > 2 ? 'text-rose-400' : 
+              (systemMetrics?.loadAvg[0] || 0) > 1 ? 'text-amber-400' : 'text-emerald-400'
+            }`}>
+              <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                (systemMetrics?.loadAvg[0] || 0) > 2 ? 'bg-rose-500' : 
+                (systemMetrics?.loadAvg[0] || 0) > 1 ? 'bg-amber-500' : 'bg-emerald-500'
+              }`} />
+              {(systemMetrics?.loadAvg[0] || 0) > 2 ? 'DEGRADED' : 
+               (systemMetrics?.loadAvg[0] || 0) > 1 ? 'WARNING' : 'OPTIMAL'}
             </span>
           </div>
           <div className="flex flex-col items-end border-l border-slate-800 pl-6">
@@ -411,58 +448,75 @@ export const Dashboard: React.FC = () => {
             )}
           </div>
 
-          <div className="technical-panel p-4 h-full flex flex-col">
-            <div className="flex items-center gap-2 mb-4">
-              <Terminal className="w-4 h-4 text-slate-400" />
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Audit History</h3>
+          <div className="technical-panel p-4 h-full flex flex-col min-h-[400px]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-slate-400" />
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Audit History</h3>
+              </div>
+              <div className="relative">
+                <input 
+                  type="text"
+                  placeholder="Filter runs..."
+                  value={runSearch}
+                  onChange={(e) => setRunSearch(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded px-2 py-0.5 text-[10px] text-slate-400 focus:outline-none focus:border-emerald-500/50 w-24 transition-all"
+                />
+              </div>
             </div>
             
             <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {runs.map((run) => (
-                <button
-                  key={run.id}
-                  onClick={() => setSelectedRunId(run.id)}
-                  className={`w-full text-left p-3 rounded-md border transition-all duration-200 group relative ${
-                    selectedRunId === run.id 
-                      ? 'bg-emerald-500/10 border-emerald-500/30 ring-1 ring-emerald-500/20' 
-                      : 'bg-slate-900/30 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  {selectedRunId === run.id && (
-                    <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-md ${
-                      run.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-rose-500'
-                    }`} />
-                  )}
-                  <div className="flex justify-between items-start mb-1">
-                    <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
-                      run.status === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
-                    }`}>
-                      RUN #{run.id}
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-600 group-hover:text-slate-400">
-                      {new Date(run.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-xs font-medium text-slate-300 truncate">
-                      Mode: {run.mode}
+              {filteredRuns.length > 0 ? (
+                filteredRuns.map((run) => (
+                  <button
+                    key={run.id}
+                    onClick={() => setSelectedRunId(run.id)}
+                    className={`w-full text-left p-3 rounded-md border transition-all duration-200 group relative ${
+                      selectedRunId === run.id 
+                        ? 'bg-emerald-500/10 border-emerald-500/30 ring-1 ring-emerald-500/20' 
+                        : 'bg-slate-900/30 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {selectedRunId === run.id && (
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-md ${
+                        run.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-rose-500'
+                      }`} />
+                    )}
+                    <div className="flex justify-between items-start mb-1">
+                      <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                        run.status === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                      }`}>
+                        RUN #{run.id}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-600 group-hover:text-slate-400">
+                        {new Date(run.timestamp).toLocaleTimeString()}
+                      </span>
                     </div>
-                    {(run as any).has_tree && (
-                      <div className="flex items-center gap-1 text-[8px] font-bold text-emerald-500 bg-emerald-500/10 px-1 rounded border border-emerald-500/20">
-                        <Maximize2 className="w-2 h-2" />
-                        SNAPSHOT
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-xs font-medium text-slate-300 truncate">
+                        Mode: {run.mode}
                       </div>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-slate-500 line-clamp-2 italic">
-                    {run.summary ? (
-                      run.summary.split('\n')[0]
-                    ) : (
-                      run.status === 'SUCCESS' ? 'Audit complete. No anomalies detected.' : 'Analysis in progress...'
-                    )}
-                  </div>
-                </button>
-              ))}
+                      {(run as any).has_tree && (
+                        <div className="flex items-center gap-1 text-[8px] font-bold text-emerald-500 bg-emerald-500/10 px-1 rounded border border-emerald-500/20">
+                          <Maximize2 className="w-2 h-2" />
+                          SNAPSHOT
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-500 line-clamp-2 italic">
+                      {run.summary ? (
+                        run.summary.split('\n')[0]
+                      ) : (
+                        run.status === 'SUCCESS' ? 'Audit complete. No anomalies detected.' : 'Analysis in progress...'
+                      )}
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="text-center py-10 text-slate-600 text-[10px] uppercase tracking-widest font-mono">
+                  No matching audits found
+                </div>
+              )}
             </div>
           </div>
 
