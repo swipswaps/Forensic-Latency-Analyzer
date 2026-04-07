@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { motion } from 'motion/react';
 
 interface ProcessNode {
   name: string;
@@ -14,14 +15,16 @@ interface ProcessNode {
 interface ProcessTreeProps {
   onSelectProcess?: (process: ProcessNode) => void;
   isProbing?: boolean;
+  hotPids?: Set<string>;
 }
 
-export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing }) => {
+export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing, hotPids }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ProcessNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [hoveredProcess, setHoveredProcess] = useState<ProcessNode | null>(null);
+  const [zoomStack, setZoomStack] = useState<d3.HierarchyRectangularNode<ProcessNode>[]>([]);
 
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -50,12 +53,15 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
 
-    const updateTreemap = () => {
+    const updateTreemap = (isResize = false) => {
       if (!containerRef.current || !svgRef.current) return;
       const width = containerRef.current.clientWidth;
       const height = 500;
 
       const svg = d3.select(svgRef.current);
+      
+      // If it's just a resize and we have a zoom stack, we might want to preserve the zoom
+      // But for simplicity, we'll rebuild and re-apply zoom if needed
       svg.selectAll('*').remove();
 
       const root = d3.hierarchy(data)
@@ -104,34 +110,47 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       const cell = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g')
         .data(root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[])
         .enter().append('g')
-        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+        .attr('transform', d => `translate(${d.x0},${d.y0})`)
+        .attr('class', 'process-node-group cursor-pointer')
+        .on('mouseenter', (event, d) => {
+          setHoveredProcess(d.data);
+        })
+        .on('mouseleave', () => {
+          setHoveredProcess(null);
+        })
+        .on('click', (event, d) => {
+          event.stopPropagation();
+          if (onSelectProcess) onSelectProcess(d.data);
+          if (d.children) {
+            setZoomStack(prev => [...prev, d as d3.HierarchyRectangularNode<ProcessNode>]);
+            zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
+          }
+        });
 
       cell.append('rect')
-        .attr('id', d => `rect-${d.data.name.replace(/\s+/g, '-')}`)
+        .attr('id', d => `rect-${d.data.name.replace(/[^\w]/g, '-')}`)
         .attr('width', d => d.x1 - d.x0)
         .attr('height', d => d.y1 - d.y0)
         .attr('fill', (d, i) => `url(#gradient-${i})`)
-        .attr('stroke', d => d.children ? '#334155' : '#0f172a')
-        .attr('stroke-width', 1)
-        .attr('class', 'cursor-pointer hover:brightness-150 transition-all duration-300')
-        .on('mouseenter', (event, d) => setHoveredProcess(d.data))
-        .on('mouseleave', () => setHoveredProcess(null))
-        .on('click', (event, d) => {
-          if (onSelectProcess) onSelectProcess(d.data);
-          zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
-          
-          // Highlight selection
-          svg.selectAll('rect').attr('stroke', node => (node as any).children ? '#334155' : '#0f172a').attr('stroke-width', 1);
-          d3.select(event.currentTarget).attr('stroke', '#10b981').attr('stroke-width', 2);
-        });
+        .attr('stroke', d => {
+          if (hotPids?.has(d.data.pid || '')) return '#ef4444';
+          return d.children ? '#334155' : '#0f172a';
+        })
+        .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 3 : 1)
+        .attr('class', d => {
+          let classes = 'transition-all duration-300 hover:brightness-125';
+          if (hotPids?.has(d.data.pid || '')) classes += ' animate-pulse';
+          return classes;
+        })
+        .style('transition', 'fill 0.3s, stroke 0.3s');
 
       cell.append('text')
         .attr('class', 'pointer-events-none fill-white/90 text-[10px] font-mono font-bold')
-        .attr('opacity', d => (d.x1 - d.x0 > 80 && d.y1 - d.y0 > 40) ? 1 : 0)
+        .attr('opacity', d => (d.x1 - d.x0 > 60 && d.y1 - d.y0 > 25) ? 1 : 0)
         .selectAll('tspan')
         .data(d => {
           const name = d.data.name.split(' (')[0];
-          const cpu = d.data.cpu ? `${d.data.cpu}% CPU` : '';
+          const cpu = d.data.cpu ? `${d.data.cpu}%` : '';
           return [name, cpu];
         })
         .enter().append('tspan')
@@ -139,16 +158,13 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         .attr('y', (d, i) => 18 + i * 12)
         .text(d => String(d));
 
-      cell.append('title')
-        .text(d => `${d.ancestors().map(d => d.data.name).reverse().join('/')}\nCPU: ${d.data.cpu}%\nMEM: ${d.data.mem}%`);
-
-      function zoom(d: d3.HierarchyRectangularNode<ProcessNode>) {
+      function zoom(d: d3.HierarchyRectangularNode<ProcessNode>, duration = 750) {
         const kx = width / (d.x1 - d.x0);
         const ky = height / (d.y1 - d.y0);
         const x = d.x0;
         const y = d.y0;
 
-        const t = svg.transition().duration(750);
+        const t = svg.transition().duration(duration).ease(d3.easeCubicInOut);
 
         svg.selectAll('g').transition(t)
           .attr('transform', (node: any) => `translate(${(node.x0 - x) * kx},${(node.y0 - y) * ky})`);
@@ -156,18 +172,56 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         svg.selectAll('rect').transition(t)
           .attr('width', (node: any) => (node.x1 - node.x0) * kx)
           .attr('height', (node: any) => (node.y1 - node.y0) * ky);
+
+        svg.selectAll('text').transition(t)
+          .attr('opacity', (node: any) => {
+            const w = (node.x1 - node.x0) * kx;
+            const h = (node.y1 - node.y0) * ky;
+            const isVisible = node.x0 >= d.x0 && node.x1 <= d.x1 && node.y0 >= d.y0 && node.y1 <= d.y1;
+            return (isVisible && w > 60 && h > 25) ? 1 : 0;
+          });
       }
+
+      // If we were zoomed in, re-apply zoom immediately without transition
+      if (zoomStack.length > 0) {
+        const lastZoom = zoomStack[zoomStack.length - 1];
+        // We need to find the equivalent node in the NEW root hierarchy
+        const targetNode = root.descendants().find(n => n.data.name === lastZoom.data.name);
+        if (targetNode) {
+          zoom(targetNode as d3.HierarchyRectangularNode<ProcessNode>, 0);
+        }
+      }
+
+      (window as any).zoomTreemapToNode = (nodeName: string) => {
+        const targetNode = root.descendants().find(n => n.data.name === nodeName);
+        if (targetNode) {
+          zoom(targetNode as d3.HierarchyRectangularNode<ProcessNode>);
+        }
+      };
+
+      (window as any).resetTreemapZoom = () => {
+        setZoomStack([]);
+        const t = svg.transition().duration(750).ease(d3.easeCubicInOut);
+        svg.selectAll('g').transition(t).attr('transform', d => `translate(${(d as any).x0},${(d as any).y0})`);
+        svg.selectAll('rect').transition(t).attr('width', d => (d as any).x1 - (d as any).x0).attr('height', d => (d as any).y1 - (d as any).y0);
+        svg.selectAll('text').transition(t).attr('opacity', d => ((d as any).x1 - (d as any).x0 > 60 && (d as any).y1 - (d as any).y0 > 25) ? 1 : 0);
+      };
     };
 
     updateTreemap();
 
+    let timeout: NodeJS.Timeout;
     const resizeObserver = new ResizeObserver(() => {
-      updateTreemap();
+      clearTimeout(timeout);
+      timeout = setTimeout(() => updateTreemap(true), 100);
     });
     resizeObserver.observe(containerRef.current);
 
-    return () => resizeObserver.disconnect();
-  }, [data]);
+    return () => {
+      resizeObserver.disconnect();
+      clearTimeout(timeout);
+    };
+  }, [data, hotPids]);
 
   return (
     <div className="technical-panel p-4" ref={containerRef} id="process-tree-container">
@@ -182,19 +236,25 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-h-[32px]">
           {hoveredProcess && (
-            <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-900/80 border border-slate-700 rounded-lg text-[10px] font-mono">
-              <span className="text-slate-400 uppercase tracking-widest">Selected:</span>
+            <motion.div 
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-900/80 border border-emerald-500/20 rounded-lg text-[10px] font-mono shadow-lg shadow-emerald-500/5"
+            >
+              <span className="text-slate-500 uppercase tracking-widest text-[8px]">Inspecting:</span>
               <span className="text-emerald-400 font-bold">{hoveredProcess.name.split(' (')[0]}</span>
-              <span className="text-blue-400">{hoveredProcess.cpu}% CPU</span>
-              <span className="text-purple-400">{hoveredProcess.mem}% MEM</span>
-            </div>
+              <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
+                <span className="text-blue-400">{hoveredProcess.cpu}% CPU</span>
+                <span className="text-purple-400">{hoveredProcess.mem}% MEM</span>
+              </div>
+            </motion.div>
           )}
           <button 
             onClick={() => {
-              if (data && svgRef.current) {
-                fetchData();
+              if ((window as any).resetTreemapZoom) {
+                (window as any).resetTreemapZoom();
               }
             }}
             className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
@@ -232,7 +292,25 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       </div>
       
       <div className="mt-3 flex items-center gap-4 text-[10px] font-mono text-slate-500">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap max-w-[50%]">
+          <span className="text-slate-600">PATH:</span>
+          <span className="text-emerald-500/50 cursor-pointer hover:text-emerald-400" onClick={() => (window as any).resetTreemapZoom?.()}>root</span>
+          {zoomStack.map((node, i) => (
+            <React.Fragment key={i}>
+              <span className="text-slate-800">/</span>
+              <span className="text-emerald-500/50 cursor-pointer hover:text-emerald-400" onClick={() => {
+                const newStack = zoomStack.slice(0, i + 1);
+                setZoomStack(newStack);
+                if ((window as any).zoomTreemapToNode) {
+                  (window as any).zoomTreemapToNode(node.data.name);
+                }
+              }}>
+                {node.data.name.split(' (')[0]}
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5 ml-auto">
           <div className="w-2 h-2 rounded-full bg-slate-700" />
           <span>Idle</span>
         </div>

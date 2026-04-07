@@ -45,6 +45,7 @@ export const Dashboard: React.FC = () => {
   const [runs, setRuns] = useState<Run[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [selectedProcess, setSelectedProcess] = useState<ProcessNode | null>(null);
+  const [hotPids, setHotPids] = useState<Set<string>>(new Set());
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [isProbing, setIsProbing] = useState(false);
@@ -148,6 +149,26 @@ export const Dashboard: React.FC = () => {
               try {
                 const json = JSON.parse(line.substring(6));
                 const text = json.text;
+                
+                // Extract Hot PIDs from logs (e.g., "[LATENCY] PID 1234 high wait")
+                if (text.includes("PID")) {
+                  const match = text.match(/PID\s+(\d+)/i);
+                  if (match && match[1]) {
+                    setHotPids(prev => {
+                      const next = new Set(prev);
+                      next.add(match[1]);
+                      return next;
+                    });
+                    // Clear hot PID after 10 seconds
+                    setTimeout(() => {
+                      setHotPids(prev => {
+                        const next = new Set(prev);
+                        next.delete(match[1]);
+                        return next;
+                      });
+                    }, 10000);
+                  }
+                }
                 
                 if (text.includes("[RUN_ID]")) {
                   const runId = parseInt(text.split("[RUN_ID]")[1].trim());
@@ -314,7 +335,11 @@ export const Dashboard: React.FC = () => {
         <div className="lg:col-span-2 space-y-6">
           <div className="flex flex-col xl:flex-row gap-6">
             <div className={`transition-all duration-500 ease-in-out ${selectedProcess ? 'xl:w-2/3' : 'w-full'}`}>
-              <ProcessTree onSelectProcess={setSelectedProcess} isProbing={isProbing} />
+              <ProcessTree 
+                onSelectProcess={setSelectedProcess} 
+                isProbing={isProbing} 
+                hotPids={hotPids}
+              />
             </div>
             
             <AnimatePresence>
