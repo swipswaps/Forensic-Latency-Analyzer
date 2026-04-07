@@ -12,7 +12,8 @@ import {
   Clock,
   HardDrive,
   Info,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -311,18 +312,21 @@ export const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Process Tree (2/3 width) */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="relative">
-            <ProcessTree onSelectProcess={setSelectedProcess} isProbing={isProbing} />
+          <div className="flex flex-col xl:flex-row gap-6">
+            <div className={`transition-all duration-500 ease-in-out ${selectedProcess ? 'xl:w-2/3' : 'w-full'}`}>
+              <ProcessTree onSelectProcess={setSelectedProcess} isProbing={isProbing} />
+            </div>
             
             <AnimatePresence>
               {selectedProcess && (
                 <motion.div
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  className="absolute top-4 right-4 w-64 bg-slate-900/95 border border-slate-700 rounded-lg shadow-2xl p-4 backdrop-blur-md z-10"
+                  initial={{ opacity: 0, x: 20, width: 0 }}
+                  animate={{ opacity: 1, x: 0, width: 'auto' }}
+                  exit={{ opacity: 0, x: 20, width: 0 }}
+                  className="xl:w-1/3 min-w-[320px]"
                 >
-                    <div className="flex items-center justify-between mb-3">
+                  <div className="technical-panel p-4 h-full flex flex-col border-emerald-500/30 bg-emerald-500/5">
+                    <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
                         <Info className="w-4 h-4 text-emerald-400" />
                         <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Process Inspector</span>
@@ -334,70 +338,76 @@ export const Dashboard: React.FC = () => {
                             LIVE
                           </div>
                         )}
-                        <button onClick={() => setSelectedProcess(null)} className="text-slate-500 hover:text-white">
+                        <button onClick={() => setSelectedProcess(null)} className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors">
                           <X className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-[9px] text-slate-600 uppercase mb-1">Command</div>
-                      <div className="text-xs font-mono text-emerald-400 break-all">{selectedProcess.name}</div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="text-[9px] text-slate-600 uppercase mb-1">CPU Usage</div>
-                        <div className="text-xs font-mono text-blue-400">{(selectedProcess as any).cpu || 0}%</div>
+
+                    <div className="space-y-4 flex-1 flex flex-col">
+                      <div className="p-3 bg-black/40 rounded border border-slate-800">
+                        <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold">Command Path</div>
+                        <div className="text-xs font-mono text-emerald-400 break-all leading-relaxed">
+                          {selectedProcess.name.split(' (')[0]}
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-[9px] text-slate-600 uppercase mb-1">Memory</div>
-                        <div className="text-xs font-mono text-purple-400">{(selectedProcess as any).mem || 0}%</div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                          <div className="text-[9px] text-slate-600 uppercase mb-1">CPU Load</div>
+                          <div className="text-sm font-mono text-blue-400 font-bold">{(selectedProcess as any).cpu || 0}%</div>
+                        </div>
+                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                          <div className="text-[9px] text-slate-600 uppercase mb-1">Memory</div>
+                          <div className="text-sm font-mono text-purple-400 font-bold">{(selectedProcess as any).mem || 0}%</div>
+                        </div>
+                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                          <div className="text-[9px] text-slate-600 uppercase mb-1">PID</div>
+                          <div className="text-sm font-mono text-slate-300">{(selectedProcess as any).pid || 'N/A'}</div>
+                        </div>
+                        <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                          <div className="text-[9px] text-slate-600 uppercase mb-1">Threads</div>
+                          <div className="text-sm font-mono text-slate-300">{selectedProcess.children?.length || 0}</div>
+                        </div>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="text-[9px] text-slate-600 uppercase mb-1">PID</div>
-                        <div className="text-xs font-mono text-slate-300">{(selectedProcess as any).pid || 'N/A'}</div>
-                      </div>
-                      <div>
-                        <div className="text-[9px] text-slate-600 uppercase mb-1">Children</div>
-                        <div className="text-xs font-mono text-slate-300">{selectedProcess.children?.length || 0}</div>
-                      </div>
-                    </div>
-                    
-                    <div className="pt-2 border-t border-slate-800">
-                      <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
-                        <span className="flex items-center gap-1">
-                          <Terminal className="w-2.5 h-2.5" />
-                          Forensic Trace
-                        </span>
-                        {loadingLogs && <Activity className="w-2 h-2 animate-pulse text-emerald-500" />}
-                      </div>
-                      <div className="h-48 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[8px] leading-tight">
-                        {selectedProcessLogs.length > 0 ? (
-                          selectedProcessLogs.map((log, i) => {
-                            const isError = log.includes('ERROR') || log.includes('CRITICAL') || log.includes('FAILED');
-                            const isSuccess = log.includes('SUCCESS') || log.includes('OK');
-                            const isMetric = log.includes('[METRIC:');
-                            
-                            return (
-                              <div key={i} className={`mb-1 border-l-2 pl-1.5 py-0.5 ${
-                                isError ? 'border-rose-500 text-rose-400 bg-rose-500/5' : 
-                                isSuccess ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5' : 
-                                isMetric ? 'border-blue-500 text-blue-400 bg-blue-500/5' :
-                                'border-slate-800 text-slate-400'
-                              }`}>
-                                <span className="opacity-50 mr-1">[{i.toString().padStart(2, '0')}]</span>
-                                {log}
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2">
-                            <Activity className="w-4 h-4 opacity-20" />
-                            <span>No active trace detected</span>
-                          </div>
-                        )}
+                      
+                      <div className="flex-1 flex flex-col min-h-0">
+                        <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <Terminal className="w-2.5 h-2.5" />
+                            Forensic Trace (Live)
+                          </span>
+                          {loadingLogs && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-500" />}
+                        </div>
+                        <div className="flex-1 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[9px] leading-tight">
+                          {selectedProcessLogs.length > 0 ? (
+                            selectedProcessLogs.map((log, i) => {
+                              const isError = log.includes('ERROR') || log.includes('CRITICAL') || log.includes('FAILED') || log.includes('LATENCY') || log.includes('WAIT');
+                              const isSuccess = log.includes('SUCCESS') || log.includes('OK');
+                              const isMetric = log.includes('[METRIC:');
+                              
+                              return (
+                                <div key={i} className={`mb-1.5 border-l-2 pl-2 py-1 ${
+                                  isError ? 'border-rose-500 text-rose-400 bg-rose-500/10' : 
+                                  isSuccess ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10' : 
+                                  isMetric ? 'border-blue-500 text-blue-400 bg-blue-500/10' :
+                                  'border-slate-800 text-slate-400'
+                                }`}>
+                                  <div className="flex justify-between items-center mb-0.5 opacity-40 text-[7px]">
+                                    <span>TRACE #{i.toString().padStart(3, '0')}</span>
+                                    <span>{new Date().toLocaleTimeString()}</span>
+                                  </div>
+                                  {log}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-3 py-10">
+                              <Activity className="w-6 h-6 opacity-10" />
+                              <span className="text-[10px] uppercase tracking-widest">No active trace detected</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>

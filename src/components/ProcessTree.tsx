@@ -50,112 +50,123 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = 500;
+    const updateTreemap = () => {
+      if (!containerRef.current || !svgRef.current) return;
+      const width = containerRef.current.clientWidth;
+      const height = 500;
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+      const svg = d3.select(svgRef.current);
+      svg.selectAll('*').remove();
 
-    const root = d3.hierarchy(data)
-      .sum(d => d.value || 0.1)
-      .sort((a, b) => (b.value || 0) - (a.value || 0));
+      const root = d3.hierarchy(data)
+        .sum(d => d.value || 0.1)
+        .sort((a, b) => (b.value || 0) - (a.value || 0));
 
-    const treemap = d3.treemap<ProcessNode>()
-      .size([width, height])
-      .paddingOuter(4)
-      .paddingTop(22)
-      .paddingInner(2)
-      .round(true);
+      const treemap = d3.treemap<ProcessNode>()
+        .size([width, height])
+        .paddingOuter(4)
+        .paddingTop(22)
+        .paddingInner(2)
+        .round(true);
 
-    treemap(root);
+      treemap(root);
 
-    const color = d3.scaleThreshold<number, string>()
-      .domain([1, 5, 10, 25, 50])
-      .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444']);
+      const color = d3.scaleThreshold<number, string>()
+        .domain([1, 5, 10, 25, 50])
+        .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444']);
 
-    // Add gradients
-    const defs = svg.append('defs');
-    
-    root.descendants().forEach((d, i) => {
-      const gradientId = `gradient-${i}`;
-      const cpu = d.data.cpu || 0;
-      const baseColor = d.children ? '#0f172a' : color(cpu);
+      // Add gradients
+      const defs = svg.append('defs');
       
-      const gradient = defs.append('linearGradient')
-        .attr('id', gradientId)
-        .attr('x1', '0%')
-        .attr('y1', '0%')
-        .attr('x2', '100%')
-        .attr('y2', '100%');
-
-      gradient.append('stop')
-        .attr('offset', '0%')
-        .attr('stop-color', baseColor)
-        .attr('stop-opacity', 0.9);
-
-      gradient.append('stop')
-        .attr('offset', '100%')
-        .attr('stop-color', d3.color(baseColor)?.darker(1.5).toString() || baseColor)
-        .attr('stop-opacity', 1);
-    });
-
-    const cell = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g')
-      .data(root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[])
-      .enter().append('g')
-      .attr('transform', d => `translate(${d.x0},${d.y0})`);
-
-    cell.append('rect')
-      .attr('id', d => `rect-${d.data.name.replace(/\s+/g, '-')}`)
-      .attr('width', d => d.x1 - d.x0)
-      .attr('height', d => d.y1 - d.y0)
-      .attr('fill', (d, i) => `url(#gradient-${i})`)
-      .attr('stroke', d => d.children ? '#334155' : '#0f172a')
-      .attr('stroke-width', 1)
-      .attr('class', 'cursor-pointer hover:brightness-150 transition-all duration-300')
-      .on('mouseenter', (event, d) => setHoveredProcess(d.data))
-      .on('mouseleave', () => setHoveredProcess(null))
-      .on('click', (event, d) => {
-        if (onSelectProcess) onSelectProcess(d.data);
-        zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
+      root.descendants().forEach((d, i) => {
+        const gradientId = `gradient-${i}`;
+        const cpu = d.data.cpu || 0;
+        const baseColor = d.children ? '#0f172a' : color(cpu);
         
-        // Highlight selection
-        svg.selectAll('rect').attr('stroke', node => (node as any).children ? '#334155' : '#0f172a').attr('stroke-width', 1);
-        d3.select(event.currentTarget).attr('stroke', '#10b981').attr('stroke-width', 2);
+        const gradient = defs.append('linearGradient')
+          .attr('id', gradientId)
+          .attr('x1', '0%')
+          .attr('y1', '0%')
+          .attr('x2', '100%')
+          .attr('y2', '100%');
+
+        gradient.append('stop')
+          .attr('offset', '0%')
+          .attr('stop-color', baseColor)
+          .attr('stop-opacity', 0.9);
+
+        gradient.append('stop')
+          .attr('offset', '100%')
+          .attr('stop-color', d3.color(baseColor)?.darker(1.5).toString() || baseColor)
+          .attr('stop-opacity', 1);
       });
 
-    cell.append('text')
-      .attr('class', 'pointer-events-none fill-white/90 text-[10px] font-mono font-bold')
-      .attr('opacity', d => (d.x1 - d.x0 > 80 && d.y1 - d.y0 > 40) ? 1 : 0)
-      .selectAll('tspan')
-      .data(d => {
-        const name = d.data.name.split(' (')[0];
-        const cpu = d.data.cpu ? `${d.data.cpu}% CPU` : '';
-        return [name, cpu];
-      })
-      .enter().append('tspan')
-      .attr('x', 8)
-      .attr('y', (d, i) => 18 + i * 12)
-      .text(d => String(d));
+      const cell = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g')
+        .data(root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[])
+        .enter().append('g')
+        .attr('transform', d => `translate(${d.x0},${d.y0})`);
 
-    cell.append('title')
-      .text(d => `${d.ancestors().map(d => d.data.name).reverse().join('/')}\nCPU: ${d.data.cpu}%\nMEM: ${d.data.mem}%`);
+      cell.append('rect')
+        .attr('id', d => `rect-${d.data.name.replace(/\s+/g, '-')}`)
+        .attr('width', d => d.x1 - d.x0)
+        .attr('height', d => d.y1 - d.y0)
+        .attr('fill', (d, i) => `url(#gradient-${i})`)
+        .attr('stroke', d => d.children ? '#334155' : '#0f172a')
+        .attr('stroke-width', 1)
+        .attr('class', 'cursor-pointer hover:brightness-150 transition-all duration-300')
+        .on('mouseenter', (event, d) => setHoveredProcess(d.data))
+        .on('mouseleave', () => setHoveredProcess(null))
+        .on('click', (event, d) => {
+          if (onSelectProcess) onSelectProcess(d.data);
+          zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
+          
+          // Highlight selection
+          svg.selectAll('rect').attr('stroke', node => (node as any).children ? '#334155' : '#0f172a').attr('stroke-width', 1);
+          d3.select(event.currentTarget).attr('stroke', '#10b981').attr('stroke-width', 2);
+        });
 
-    function zoom(d: d3.HierarchyRectangularNode<ProcessNode>) {
-      const kx = width / (d.x1 - d.x0);
-      const ky = height / (d.y1 - d.y0);
-      const x = d.x0;
-      const y = d.y0;
+      cell.append('text')
+        .attr('class', 'pointer-events-none fill-white/90 text-[10px] font-mono font-bold')
+        .attr('opacity', d => (d.x1 - d.x0 > 80 && d.y1 - d.y0 > 40) ? 1 : 0)
+        .selectAll('tspan')
+        .data(d => {
+          const name = d.data.name.split(' (')[0];
+          const cpu = d.data.cpu ? `${d.data.cpu}% CPU` : '';
+          return [name, cpu];
+        })
+        .enter().append('tspan')
+        .attr('x', 8)
+        .attr('y', (d, i) => 18 + i * 12)
+        .text(d => String(d));
 
-      const t = svg.transition().duration(750);
+      cell.append('title')
+        .text(d => `${d.ancestors().map(d => d.data.name).reverse().join('/')}\nCPU: ${d.data.cpu}%\nMEM: ${d.data.mem}%`);
 
-      svg.selectAll('g').transition(t)
-        .attr('transform', (node: any) => `translate(${(node.x0 - x) * kx},${(node.y0 - y) * ky})`);
+      function zoom(d: d3.HierarchyRectangularNode<ProcessNode>) {
+        const kx = width / (d.x1 - d.x0);
+        const ky = height / (d.y1 - d.y0);
+        const x = d.x0;
+        const y = d.y0;
 
-      svg.selectAll('rect').transition(t)
-        .attr('width', (node: any) => (node.x1 - node.x0) * kx)
-        .attr('height', (node: any) => (node.y1 - node.y0) * ky);
-    }
+        const t = svg.transition().duration(750);
 
+        svg.selectAll('g').transition(t)
+          .attr('transform', (node: any) => `translate(${(node.x0 - x) * kx},${(node.y0 - y) * ky})`);
+
+        svg.selectAll('rect').transition(t)
+          .attr('width', (node: any) => (node.x1 - node.x0) * kx)
+          .attr('height', (node: any) => (node.y1 - node.y0) * ky);
+      }
+    };
+
+    updateTreemap();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateTreemap();
+    });
+    resizeObserver.observe(containerRef.current);
+
+    return () => resizeObserver.disconnect();
   }, [data]);
 
   return (
