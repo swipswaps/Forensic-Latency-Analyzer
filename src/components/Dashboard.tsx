@@ -316,6 +316,7 @@ export const Dashboard: React.FC = () => {
                 hotPids={hotPids}
                 historicalData={historicalTree}
                 selectedRunId={selectedRunId}
+                selectedRunMode={selectedRun?.mode}
                 probeOutput={probeOutput}
               />
             </div>

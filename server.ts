@@ -177,7 +177,8 @@ async function startServer() {
 
       // Live capture: use -axww for maximum compatibility and full width
       // We'll skip the header manually to be safe across all ps versions
-      const { stdout } = await execAsync("ps -axww -o ppid,pid,pcpu,pmem,args");
+      // Added stat and lstart for "other data" request
+      const { stdout } = await execAsync("ps -axww -o ppid,pid,pcpu,pmem,stat,lstart,args");
       const lines = stdout.trim().split("\n");
       const nodes = new Map<string, any>();
 
@@ -186,13 +187,15 @@ async function startServer() {
 
       dataLines.forEach(line => {
         const parts = line.trim().split(/\s+/);
-        if (parts.length < 5) return;
+        if (parts.length < 11) return;
         
         const ppid = parts[0];
         const pid = parts[1];
         const cpu = parseFloat(parts[2]) || 0;
         const mem = parseFloat(parts[3]) || 0;
-        const args = parts.slice(4).join(" ");
+        const stat = parts[4];
+        const startTime = parts.slice(5, 10).join(" ");
+        const args = parts.slice(10).join(" ");
         
         // Ensure we have a valid value for the treemap
         const value = Math.max(0.1, cpu + mem);
@@ -204,7 +207,9 @@ async function startServer() {
           cpu,
           mem,
           pid,
-          ppid
+          ppid,
+          stat,
+          startTime
         });
       });
 

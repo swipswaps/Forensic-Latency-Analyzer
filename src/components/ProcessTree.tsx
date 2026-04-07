@@ -18,10 +18,11 @@ interface ProcessTreeProps {
   hotPids?: Set<string>;
   historicalData?: ProcessNode | null;
   selectedRunId?: number | null;
+  selectedRunMode?: string;
   probeOutput?: string[];
 }
 
-export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing, hotPids, historicalData, selectedRunId, probeOutput }) => {
+export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing, hotPids, historicalData, selectedRunId, selectedRunMode, probeOutput }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ProcessNode | null>(null);
@@ -57,6 +58,8 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       fetchRunLogs(selectedRunId);
     }
   }, [selectedRunId]);
+
+  const [showFullLog, setShowFullLog] = useState(false);
 
   const fetchProcessLogs = async (processName: string, pid?: string) => {
     if (isProbing) return; 
@@ -630,25 +633,61 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">State</div>
+                        <div className="text-[10px] font-mono text-amber-400">{(selectedProcess as any).stat || 'N/A'}</div>
+                      </div>
+                      <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">PPID</div>
+                        <div className="text-[10px] font-mono text-slate-400">{(selectedProcess as any).ppid || 'N/A'}</div>
+                      </div>
+                    </div>
+
+                    <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
+                      <div className="text-[9px] text-slate-600 uppercase mb-1">Start Time</div>
+                      <div className="text-[10px] font-mono text-slate-400">{(selectedProcess as any).startTime || 'N/A'}</div>
+                    </div>
+
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
                         <span className="flex items-center gap-1">
                           <Terminal className="w-2.5 h-2.5" />
-                          Forensic Trace
+                          {showFullLog ? 'Full Audit Log' : 'Forensic Trace'}
                         </span>
-                        {loadingLogs && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-500" />}
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setShowFullLog(!showFullLog)}
+                            className={`px-1.5 py-0.5 rounded text-[8px] border transition-colors ${showFullLog ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
+                          >
+                            {showFullLog ? 'Show Filtered' : 'Show Full'}
+                          </button>
+                          {loadingLogs && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-500" />}
+                        </div>
                       </div>
                       <div className="flex-1 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[9px] leading-tight min-h-[200px]">
-                        {selectedProcessLogs.length > 0 ? (
+                        {showFullLog ? (
+                          (isProbing ? probeOutput.flatMap(c => c.split('\n')) : runLogs).map((log, i) => (
+                            <div key={i} className="mb-1 text-slate-500 hover:text-slate-300 transition-colors">
+                              {log}
+                            </div>
+                          ))
+                        ) : selectedProcessLogs.length > 0 ? (
                           selectedProcessLogs.map((log, i) => (
                             <div key={i} className="mb-1.5 border-l-2 border-slate-800 pl-2 py-1 text-slate-400">
                               {log}
                             </div>
                           ))
                         ) : (
-                          <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2 py-10">
+                          <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2 py-10 px-4 text-center">
                             <Activity className="w-4 h-4 opacity-10" />
                             <span className="text-[8px] uppercase tracking-widest">No traces recorded</span>
+                            {selectedRunMode === 'MODULE:DEPS' && (
+                              <p className="text-[8px] text-slate-500 mt-2 normal-case leading-relaxed">
+                                Run mode <span className="text-emerald-500">DEPS</span> only verifies tool availability. 
+                                Switch to <span className="text-blue-500">Standard</span> or <span className="text-purple-500">Advanced</span> mode to capture process traces.
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
