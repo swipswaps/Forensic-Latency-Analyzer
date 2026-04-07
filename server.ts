@@ -167,23 +167,34 @@ async function startServer() {
 
   app.get("/api/process-tree", async (req, res) => {
     try {
-      // Get detailed process info: ppid, pid, %cpu, %mem, args
-      // Using -ww for wide output to get full arguments
-      const { stdout } = await execAsync("ps -axww -o ppid,pid,%cpu,%mem,args --no-headers");
+      const runId = req.query.runId;
+      if (runId) {
+        const run = db.prepare("SELECT process_tree FROM runs WHERE id = ?").get(runId) as any;
+        if (run && run.process_tree) {
+          return res.json(JSON.parse(run.process_tree));
+        }
+      }
+
+      // Live capture: use -axww for maximum compatibility and full width
+      // We'll skip the header manually to be safe across all ps versions
+      const { stdout } = await execAsync("ps -axww -o ppid,pid,pcpu,pmem,args");
       const lines = stdout.trim().split("\n");
       const nodes = new Map<string, any>();
 
-      lines.forEach(line => {
+      // Skip the header line
+      const dataLines = lines[0].toLowerCase().includes("pid") ? lines.slice(1) : lines;
+
+      dataLines.forEach(line => {
         const parts = line.trim().split(/\s+/);
         if (parts.length < 5) return;
+        
         const ppid = parts[0];
         const pid = parts[1];
-        const cpu = parseFloat(parts[2]);
-        const mem = parseFloat(parts[3]);
+        const cpu = parseFloat(parts[2]) || 0;
+        const mem = parseFloat(parts[3]) || 0;
         const args = parts.slice(4).join(" ");
         
-        // Use a combination of CPU and Memory for the "value" (size) of the block
-        // We add a small baseline (0.1) so idle processes are still visible
+        // Ensure we have a valid value for the treemap
         const value = Math.max(0.1, cpu + mem);
         
         nodes.set(pid, { 
@@ -201,7 +212,7 @@ async function startServer() {
         name: "system-root", 
         children: [], 
         value: 0, 
-        version: "1.1", // Schema versioning
+        version: "1.1", 
         timestamp: new Date().toISOString()
       };
       
@@ -209,8 +220,8 @@ async function startServer() {
         const parent = nodes.get(node.ppid);
         if (parent && node.ppid !== pid) {
           parent.children.push(node);
-        } else if (node.ppid !== pid) {
-          // If parent not found, attach to root (prevents orphans)
+        } else {
+          // Root-level or orphan (including cases where ppid is 0 or not found)
           root.children.push(node);
         }
       });
@@ -235,11 +246,11 @@ async function startServer() {
         }
       };
 
-      root.children.forEach(addSelfNodes);
-
+      addSelfNodes(root);
       res.json(root);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    } catch (err) {
+      console.error("Failed to get process tree", err);
+      res.status(500).json({ error: "Failed to get process tree" });
     }
   });
 
