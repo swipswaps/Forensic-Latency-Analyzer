@@ -696,6 +696,47 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({
                       </div>
                     </div>
 
+                    {/* Process Action Buttons — Pause / Resume / Kill */}
+                    {(() => {
+                      const pid = (selectedProcess as any).pid?.replace(/-self$/, '');
+                      const name = selectedProcess.name.split(' ')[0];
+                      if (!pid || pid === 'undefined') return null;
+                      return (
+                        <div className="p-3 bg-slate-900/40 rounded border border-slate-800">
+                          <div className="text-[9px] text-slate-600 uppercase mb-2 font-bold flex items-center gap-1">
+                            <Activity className="w-2.5 h-2.5" />
+                            Process Controls
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {[
+                              { sig: 'STOP', label: 'Pause',  color: 'text-amber-400 border-amber-800 hover:bg-amber-900/30' },
+                              { sig: 'CONT', label: 'Resume', color: 'text-emerald-400 border-emerald-800 hover:bg-emerald-900/30' },
+                              { sig: 'KILL', label: 'Kill',   color: 'text-red-400 border-red-900 hover:bg-red-900/30' },
+                            ].map(({ sig, label, color }) => (
+                              <button
+                                key={sig}
+                                onClick={async () => {
+                                  try {
+                                    const r = await fetch(`/api/signal-process?pid=${pid}&signal=${sig}`);
+                                    const d = await r.json();
+                                    console.log('[SIGNAL]', d);
+                                  } catch (e) {
+                                    console.error('[SIGNAL:ERROR]', e);
+                                  }
+                                }}
+                                className={`py-1 text-[9px] font-mono font-bold border rounded transition-colors ${color}`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-[8px] text-slate-700 mt-1.5">
+                            Sends POSIX signal to PID {pid} ({name}). Pause freezes CPU use without terminating.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
                     {/* Forensic Trace / Full Audit Log */}
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
