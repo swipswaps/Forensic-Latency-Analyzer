@@ -1,3 +1,4 @@
+// PATH: src/components/ProcessTree.tsx
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Maximize2, Minimize2, RefreshCw, Info, Activity, X, Terminal, Clock, Shield } from 'lucide-react';
@@ -22,7 +23,44 @@ interface ProcessTreeProps {
   probeOutput?: string[];
 }
 
-export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isProbing, hotPids, historicalData, selectedRunId, selectedRunMode, probeOutput }) => {
+// Colorize a single log line for the audit log viewer.
+// Returns a Tailwind class string based on the tag prefix.
+function logLineClass(line: string): string {
+  if (line.includes('[MODULE:'))  return 'text-emerald-400 font-bold border-l border-emerald-500/50 pl-1';
+  if (line.includes('[METRIC:'))  return 'text-blue-400';
+  if (line.includes('[COMMAND]')) return 'text-violet-400';
+  if (line.includes('[TIME]'))    return 'text-slate-600';
+  if (line.includes('[ERROR]') || line.includes('[CRITICAL]')) return 'text-red-400';
+  if (line.includes('[STDOUT]'))  return 'text-slate-400 hover:text-slate-300';
+  return 'text-slate-500 hover:text-slate-300';
+}
+
+// Return a human-readable explanation for the current risk level.
+function riskExplanation(risk: string, stat: string): string {
+  if (risk === 'Critical') {
+    if (stat.includes('D')) return 'Process in uninterruptible sleep (D) — blocked on I/O or kernel lock';
+    return 'CPU > 90% — severe resource contention';
+  }
+  if (risk === 'High')     return 'CPU > 50% or hot PID with elevated activity detected';
+  if (risk === 'Moderate') return 'Elevated CPU or hot PID flagged during this probe run';
+  return 'No resource contention signals captured in this run';
+}
+
+// Format the ps lstart string into a short human-readable form.
+function formatStartTime(raw: string | undefined): string {
+  if (!raw || raw === 'N/A') return 'N/A';
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw; // already formatted or unparseable
+  return d.toLocaleString(undefined, {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+export const ProcessTree: React.FC<ProcessTreeProps> = ({
+  onSelectProcess, isProbing, hotPids, historicalData,
+  selectedRunId, selectedRunMode, probeOutput
+}) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ProcessNode | null>(null);
@@ -33,13 +71,18 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<d3.HierarchyNode<ProcessNode>[]>([]);
   const [colorMode, setColorMode] = useState<'cpu' | 'mem'>('cpu');
-  
+
   const valueCache = useRef<Map<string, number>>(new Map());
   const searchIndex = useRef<Map<string, d3.HierarchyNode<ProcessNode>>>(new Map());
-  
+
   const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [runLogs, setRunLogs] = useState<string[]>([]);
+  // logLimit drives the paginated "Load more" in the full audit log view.
+  const [logLimit, setLogLimit] = useState(100);
+  // showFullLog: true = full audit log, false = filtered per-process trace.
+  // Auto-set to true when traces are zero (see effect below).
+  const [showFullLog, setShowFullLog] = useState(false);
 
   const fetchRunLogs = async (runId: number) => {
     setLoadingLogs(true);
@@ -57,14 +100,13 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   useEffect(() => {
     if (selectedRunId) {
       fetchRunLogs(selectedRunId);
+      setLogLimit(100); // reset pagination when run changes
     }
   }, [selectedRunId]);
 
-  const [showFullLog, setShowFullLog] = useState(false);
-
   const fetchProcessLogs = async (processName: string, pid?: string) => {
-    if (isProbing) return; 
-    
+    if (isProbing) return;
+
     setLoadingLogs(true);
     try {
       const cleanName = processName.replace(/^\[self\]\s+/, '').split(' (')[0].toLowerCase();
@@ -73,9 +115,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       if (runLogs.length > 0) {
         const filtered = runLogs.filter(line => {
           const lowerLine = line.toLowerCase();
-          const matchesName = lowerLine.includes(cleanName);
-          const matchesPid = cleanPid && lowerLine.includes(cleanPid);
-          return matchesName || matchesPid;
+          return lowerLine.includes(cleanName) || (cleanPid && lowerLine.includes(cleanPid));
         });
         setSelectedProcessLogs(filtered);
         return;
@@ -94,38 +134,34 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
 
   useEffect(() => {
     if (selectedProcess) {
-      const name = selectedProcess.name;
-      const pid = (selectedProcess as any).pid;
-      fetchProcessLogs(name, pid);
+      fetchProcessLogs(selectedProcess.name, (selectedProcess as any).pid);
     }
   }, [selectedProcess, runLogs, isProbing]);
 
-  // Live log filtering
+  // Auto-expand full log when traces are zero — eliminates the "Show Full" click.
+  useEffect(() => {
+    if (!selectedProcess) return;
+    // Wait briefly so fetchProcessLogs has had a chance to settle.
+    const timer = setTimeout(() => {
+      setShowFullLog(selectedProcessLogs.length === 0);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [selectedProcessLogs, selectedProcess]);
+
+  // Live log filtering during active probe.
   useEffect(() => {
     if (isProbing && selectedProcess && probeOutput && probeOutput.length > 0) {
       const processName = selectedProcess.name.replace(/^\[self\]\s+/, '').split(' (')[0].toLowerCase();
       const pid = (selectedProcess as any).pid?.replace(/-self$/, '');
-      
-      // Hardened Regex: Matches boundary PID or common formats like pid=123, pid: 123
       const pidRegex = pid ? new RegExp(`(\\b${pid}\\b|pid[=:]\\s*${pid})`, 'i') : null;
 
-      // When selectedProcess changes, we might want to scan the entire history
-      // But for performance, we usually just append new lines.
-      // To fix "no traces" on selection, we scan the whole probeOutput once.
-      
-      const filterLines = (chunks: string[]) => {
-        const allLines = chunks.flatMap(chunk => chunk.split('\n'));
-        return allLines.filter(line => {
-          if (!line.trim()) return false;
-          const lowerLine = line.toLowerCase();
-          const matchesName = lowerLine.includes(processName);
-          const matchesPid = pidRegex ? pidRegex.test(line) : false;
-          return matchesName || matchesPid;
-        });
-      };
-
-      // If this is the first time we're filtering for this process, scan everything
-      setSelectedProcessLogs(filterLines(probeOutput).slice(-100));
+      const allLines = probeOutput.flatMap(chunk => chunk.split('\n'));
+      const filtered = allLines.filter(line => {
+        if (!line.trim()) return false;
+        const lowerLine = line.toLowerCase();
+        return lowerLine.includes(processName) || (pidRegex ? pidRegex.test(line) : false);
+      });
+      setSelectedProcessLogs(filtered.slice(-100));
     } else if (!selectedProcess) {
       setSelectedProcessLogs([]);
     }
@@ -136,22 +172,19 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
     try {
       const response = await fetch('/api/process-tree');
       const json = await response.json();
-      
-      // Compliance FIX: Metric Smoothing
+
       const smooth = (node: ProcessNode) => {
         const key = node.pid || node.name;
         const prevValue = valueCache.current.get(key) || node.value || 0.1;
         const newValue = node.value || 0.1;
-        const smoothedValue = (prevValue * 0.7) + (newValue * 0.3);
-        node.value = Math.max(0.1, smoothedValue);
+        node.value = Math.max(0.1, (prevValue * 0.7) + (newValue * 0.3));
         valueCache.current.set(key, node.value);
         if (node.children) node.children.forEach(smooth);
       };
       smooth(json);
-      
+
       setData(json);
-      
-      // Compliance FIX: Global Search Index
+
       const root = d3.hierarchy(json);
       const index = new Map();
       root.descendants().forEach(d => {
@@ -170,8 +203,6 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
     if (historicalData) {
       setData(historicalData);
       setLoading(false);
-      
-      // Index historical data too
       const root = d3.hierarchy(historicalData);
       const index = new Map();
       root.descendants().forEach(d => {
@@ -194,46 +225,30 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
 
-    // Data-level LOD: Prune tiny nodes before layout to save compute
     const pruneTree = (node: ProcessNode, isRoot = false): ProcessNode | null => {
-      // If it's a leaf, check value
       if (!node.children || node.children.length === 0) {
         return (isRoot || (node.value || 0) > 0.05) ? node : null;
       }
-      
-      // If it's a parent, prune children first
       const prunedChildren = node.children
         .map(c => pruneTree(c, false))
         .filter((child): child is ProcessNode => child !== null);
-        
-      // Keep if it's the root, has children, or is a leaf with enough value
       if (isRoot || prunedChildren.length > 0) {
         return { ...node, children: prunedChildren };
       }
-      
       return (node.value || 0) > 0.05 ? { ...node, children: [] } : null;
     };
 
     const processedData = pruneTree(data, true);
     if (!processedData) return;
 
-    if (processedData.children?.length === 0) {
-      console.warn("[FORENSIC:VISUAL] Process tree has no children after pruning.", processedData);
-    }
-
     const updateTreemap = () => {
       try {
         if (!containerRef.current || !svgRef.current) return;
         const width = containerRef.current.clientWidth;
         const height = 500;
-        
-        if (width === 0) {
-          console.warn("[FORENSIC:VISUAL] Container width is 0, skipping render.");
-          return;
-        }
+        if (width === 0) return;
 
         const svg = d3.select(svgRef.current);
-
         const root = d3.hierarchy(processedData)
           .sum(d => Math.max(0.1, d.value || 0))
           .sort((a, b) => (b.value || 0) - (a.value || 0));
@@ -247,7 +262,6 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
 
         treemap(root);
 
-        // Re-index on every render to ensure nodes match current hierarchy
         const index = new Map();
         root.descendants().forEach(d => {
           if (d.data.pid) index.set(d.data.pid.toString(), d);
@@ -255,7 +269,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         });
         searchIndex.current = index;
 
-        const color = colorMode === 'cpu' 
+        const color = colorMode === 'cpu'
           ? d3.scaleThreshold<number, string>()
               .domain([1, 5, 10, 25, 50])
               .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444'])
@@ -263,58 +277,45 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
               .domain([1, 5, 10, 20, 40])
               .range(['#1e293b', '#334155', '#475569', '#8b5cf6', '#d946ef', '#ec4899']);
 
-        // Manage gradients
         let defs = svg.select('defs');
         if (defs.empty()) defs = svg.append('defs');
-        
+
         const gradientData = root.descendants().filter(d => {
           const dx = (d as any).x1 - (d as any).x0;
           const dy = (d as any).y1 - (d as any).y0;
           return dx > 0.5 && dy > 0.5;
         });
+
         const gradients = defs.selectAll('linearGradient')
           .data(gradientData, (d: any) => d.data.pid || d.data.name);
-
         gradients.exit().remove();
-
         const gradientsEnter = gradients.enter().append('linearGradient')
           .attr('id', (d, i) => `gradient-${d.data.pid || i}`)
-          .attr('x1', '0%')
-          .attr('y1', '0%')
-          .attr('x2', '100%')
-          .attr('y2', '100%');
-
+          .attr('x1', '0%').attr('y1', '0%').attr('x2', '100%').attr('y2', '100%');
         gradientsEnter.append('stop').attr('offset', '0%').attr('stop-opacity', 0.9);
         gradientsEnter.append('stop').attr('offset', '100%').attr('stop-opacity', 1);
-
         gradients.merge(gradientsEnter as any).each(function(d) {
           const val = colorMode === 'cpu' ? (d.data.cpu || 0) : (d.data.mem || 0);
-          const isParent = d.children && d.children.length > 0;
-          const baseColor = isParent ? '#0f172a' : color(val);
+          const baseColor = (d.children && d.children.length > 0) ? '#0f172a' : color(val);
           const g = d3.select(this);
           g.select('stop:first-child').attr('stop-color', baseColor);
           g.select('stop:last-child').attr('stop-color', d3.color(baseColor)?.darker(1.5).toString() || baseColor);
         });
 
-        // Manage cells
         const cellData = root.descendants().filter(d => {
           const dx = (d as any).x1 - (d as any).x0;
           const dy = (d as any).y1 - (d as any).y0;
           return dx > 0.5 && dy > 0.5;
         }) as d3.HierarchyRectangularNode<ProcessNode>[];
+
         const cells = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g.process-node-group')
           .data(cellData, (d: any) => d.data.pid || d.data.name);
-
         cells.exit().remove();
 
         const cellsEnter = cells.enter().append('g')
           .attr('class', 'process-node-group cursor-pointer')
-          .on('mouseenter', (event, d) => {
-            setHoveredProcess(d.data);
-          })
-          .on('mouseleave', () => {
-            setHoveredProcess(null);
-          })
+          .on('mouseenter', (event, d) => setHoveredProcess(d.data))
+          .on('mouseleave', () => setHoveredProcess(null))
           .on('click', (event, d) => {
             event.stopPropagation();
             if (onSelectProcess) onSelectProcess(d.data);
@@ -328,12 +329,10 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         cellsEnter.append('rect')
           .attr('id', d => `rect-${d.data.name.replace(/[^\w]/g, '-')}`)
           .style('transition', 'fill 0.3s, stroke 0.3s');
-
         cellsEnter.append('text')
           .attr('class', 'pointer-events-none fill-white/90 text-[10px] font-mono font-bold');
 
         const cellsMerged = cells.merge(cellsEnter as any);
-
         cellsMerged.transition().duration(500)
           .attr('transform', d => `translate(${d.x0},${d.y0})`);
 
@@ -341,32 +340,26 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           .attr('width', d => d.x1 - d.x0)
           .attr('height', d => d.y1 - d.y0)
           .attr('fill', (d, i) => `url(#gradient-${d.data.pid || i})`)
-          .attr('stroke', d => {
-            if (hotPids?.has(d.data.pid || '')) return '#ef4444';
-            return (d.children && d.children.length > 0) ? '#334155' : '#0f172a';
-          })
+          .attr('stroke', d => hotPids?.has(d.data.pid || '') ? '#ef4444' : (d.children?.length ? '#334155' : '#0f172a'))
           .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 2 : 1)
           .style('opacity', d => {
             if (!searchQuery) return 1;
-            const matches = d.data.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (d.data.pid && d.data.pid.toString().includes(searchQuery));
-            return matches ? 1 : 0.2;
+            return (d.data.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              (d.data.pid && d.data.pid.toString().includes(searchQuery))) ? 1 : 0.2;
           });
 
         cellsMerged.select('text')
           .attr('opacity', d => {
-            const matchesSearch = !searchQuery || 
-                                d.data.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                (d.data.pid && d.data.pid.toString().includes(searchQuery));
+            const matchesSearch = !searchQuery ||
+              d.data.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              (d.data.pid && d.data.pid.toString().includes(searchQuery));
             return (matchesSearch && d.x1 - d.x0 > 60 && d.y1 - d.y0 > 25) ? 1 : 0;
           })
           .each(function(d) {
             const t = d3.select(this);
             const name = d.data.name.split(' (')[0];
             const val = colorMode === 'cpu' ? (d.data.cpu ? `${d.data.cpu}%` : '') : (d.data.mem ? `${d.data.mem}%` : '');
-            const lines = [name, val];
-            
-            const tspans = t.selectAll('tspan').data(lines);
+            const tspans = t.selectAll('tspan').data([name, val]);
             tspans.exit().remove();
             tspans.enter().append('tspan')
               .attr('x', 8)
@@ -380,16 +373,12 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           const ky = height / (d.y1 - d.y0);
           const x = d.x0;
           const y = d.y0;
-
           const t = svg.transition().duration(duration).ease(d3.easeCubicInOut);
-
           svg.selectAll('g.process-node-group').transition(t)
             .attr('transform', (node: any) => `translate(${(node.x0 - x) * kx},${(node.y0 - y) * ky})`);
-
           svg.selectAll('rect').transition(t)
             .attr('width', (node: any) => (node.x1 - node.x0) * kx)
             .attr('height', (node: any) => (node.y1 - node.y0) * ky);
-
           svg.selectAll('text').transition(t)
             .attr('opacity', (node: any) => {
               const w = (node.x1 - node.x0) * kx;
@@ -399,24 +388,25 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
             });
         }
 
-        // If we were zoomed in, re-apply zoom immediately without transition
         if (zoomStack.length > 0) {
           const lastZoom = zoomStack[zoomStack.length - 1];
           const targetNode = root.descendants().find(n => n.data.name === lastZoom.data.name);
-          if (targetNode) {
-            zoom(targetNode as d3.HierarchyRectangularNode<ProcessNode>, 0);
-          }
+          if (targetNode) zoom(targetNode as d3.HierarchyRectangularNode<ProcessNode>, 0);
         }
 
         (window as any).resetTreemapZoom = () => {
           setZoomStack([]);
           const t = svg.transition().duration(750).ease(d3.easeCubicInOut);
-          svg.selectAll('g.process-node-group').transition(t).attr('transform', d => `translate(${(d as any).x0},${(d as any).y0})`);
-          svg.selectAll('rect').transition(t).attr('width', d => (d as any).x1 - (d as any).x0).attr('height', d => (d as any).y1 - (d as any).y0);
-          svg.selectAll('text').transition(t).attr('opacity', d => ((d as any).x1 - (d as any).x0 > 60 && (d as any).y1 - (d as any).y0 > 25) ? 1 : 0);
+          svg.selectAll('g.process-node-group').transition(t)
+            .attr('transform', d => `translate(${(d as any).x0},${(d as any).y0})`);
+          svg.selectAll('rect').transition(t)
+            .attr('width', d => (d as any).x1 - (d as any).x0)
+            .attr('height', d => (d as any).y1 - (d as any).y0);
+          svg.selectAll('text').transition(t)
+            .attr('opacity', d => ((d as any).x1 - (d as any).x0 > 60 && (d as any).y1 - (d as any).y0 > 25) ? 1 : 0);
         };
       } catch (err) {
-        console.error("[FORENSIC:RENDER_ERROR]", err);
+        console.error('[FORENSIC:RENDER_ERROR]', err);
       }
     };
 
@@ -427,66 +417,50 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       clearTimeout(timeout);
       timeout = setTimeout(() => updateTreemap(), 200);
     });
-    resizeObserver.observe(containerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-      clearTimeout(timeout);
-    };
+    resizeObserver.observe(containerRef.current!);
+    return () => { resizeObserver.disconnect(); clearTimeout(timeout); };
   }, [data]);
 
-  // Separate effect for hotPids to avoid layout jittering
   useEffect(() => {
     if (!svgRef.current) return;
-    const svg = d3.select(svgRef.current);
-    
-    svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g.process-node-group')
+    d3.select(svgRef.current)
+      .selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g.process-node-group')
       .select('rect')
-      .attr('stroke', d => {
-        if (hotPids?.has(d.data.pid || '')) return '#ef4444';
-        return d.children ? '#334155' : '#0f172a';
-      })
-      .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 3 : 1)
-      .attr('class', d => {
-        let classes = 'transition-all duration-300 hover:brightness-125';
-        if (hotPids?.has(d.data.pid || '')) classes += ' animate-pulse-fast shadow-[0_0_15px_rgba(239,68,68,0.5)]';
-        if ((d.data as any).isSelf) classes += ' opacity-80';
-        return classes;
-      });
+      .attr('stroke', d => hotPids?.has(d.data.pid || '') ? '#ef4444' : (d.children ? '#334155' : '#0f172a'))
+      .attr('stroke-width', d => hotPids?.has(d.data.pid || '') ? 3 : 1);
   }, [hotPids]);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    if (!query.trim() || !data) {
-      setSearchResults([]);
-      return;
-    }
-
-    // Compliance FIX: Search using global index
+    if (!query.trim() || !data) { setSearchResults([]); return; }
     const results: d3.HierarchyNode<ProcessNode>[] = [];
     const lowerQuery = query.toLowerCase();
-    
     searchIndex.current.forEach((node, key) => {
-      if (key.includes(lowerQuery) && !results.includes(node)) {
-        results.push(node);
-      }
+      if (key.includes(lowerQuery) && !results.includes(node)) results.push(node);
     });
-    
     setSearchResults(results.slice(0, 10));
   };
 
   const jumpToNode = (node: d3.HierarchyNode<ProcessNode>) => {
-    // Compliance FIX: Reconstruct zoom stack to "drill down"
     const ancestors = node.ancestors().reverse();
-    const stack = ancestors.slice(1, -1) as d3.HierarchyRectangularNode<ProcessNode>[];
-    setZoomStack(stack);
-    
+    setZoomStack(ancestors.slice(1, -1) as d3.HierarchyRectangularNode<ProcessNode>[]);
     setSearchQuery('');
     setSearchResults([]);
-    
     if (onSelectProcess) onSelectProcess(node.data);
     setSelectedProcess(node.data);
   };
+
+  // Derive the search match count for display next to the search input.
+  const searchMatchCount = searchQuery
+    ? (() => {
+        let count = 0;
+        searchIndex.current.forEach((node, key) => {
+          if (key.includes(searchQuery.toLowerCase())) count++;
+        });
+        // Divide by ~2 because each node is indexed twice (pid + name)
+        return Math.ceil(count / 2);
+      })()
+    : null;
 
   return (
     <div className="technical-panel p-4 relative overflow-hidden flex flex-col" ref={containerRef} id="process-tree-container">
@@ -504,34 +478,38 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
               </div>
             )}
           </div>
-          
+
           <div className="flex items-center gap-3">
             <div className="flex items-center bg-slate-900 rounded-md p-0.5 border border-slate-800">
-              <button 
+              <button
                 onClick={() => setColorMode('cpu')}
                 className={`px-3 py-1 text-[10px] font-mono rounded transition-all ${colorMode === 'cpu' ? 'bg-blue-500/20 text-blue-400 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                CPU
-              </button>
-              <button 
+              >CPU</button>
+              <button
                 onClick={() => setColorMode('mem')}
                 className={`px-3 py-1 text-[10px] font-mono rounded transition-all ${colorMode === 'mem' ? 'bg-purple-500/20 text-purple-400 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                MEM
-              </button>
+              >MEM</button>
             </div>
 
             <div className="relative">
-              <input
-                type="text"
-                placeholder="Search PID or Process..."
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 w-48 transition-all"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Search PID or Process..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 w-48 transition-all"
+                />
+                {/* Match count — shown only when searching */}
+                {searchMatchCount !== null && (
+                  <span className={`text-[10px] font-mono shrink-0 ${searchMatchCount === 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {searchMatchCount === 0 ? 'no match' : `${searchMatchCount} node${searchMatchCount !== 1 ? 's' : ''}`}
+                  </span>
+                )}
+              </div>
               <AnimatePresence>
                 {searchResults.length > 0 && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
@@ -553,7 +531,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
             </div>
 
             <div className="flex items-center gap-1">
-              <button 
+              <button
                 onClick={() => (window as any).resetTreemapZoom?.()}
                 className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
                 title="Reset Zoom"
@@ -561,8 +539,8 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                 <Minimize2 className="w-4 h-4" />
               </button>
               {!historicalData && (
-                <button 
-                  onClick={() => fetchData()} 
+                <button
+                  onClick={() => fetchData()}
                   className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-emerald-400"
                   title="Refresh Data"
                 >
@@ -573,22 +551,20 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           </div>
         </div>
 
+        {/* Breadcrumb with PID annotation */}
         <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap py-1 border-y border-slate-800/50">
           <Shield className="w-3 h-3 text-slate-600 shrink-0" />
           <span className="text-[10px] font-mono text-slate-600 uppercase tracking-tighter">Path:</span>
-          <button 
+          <button
             onClick={() => (window as any).resetTreemapZoom?.()}
             className="text-[10px] font-mono text-emerald-500/70 hover:text-emerald-400 transition-colors"
-          >
-            root
-          </button>
+          >root</button>
           {zoomStack.map((node, i) => (
             <React.Fragment key={i}>
               <span className="text-slate-800 text-[10px]">/</span>
-              <button 
+              <button
                 onClick={() => {
-                  const newStack = zoomStack.slice(0, i + 1);
-                  setZoomStack(newStack);
+                  setZoomStack(zoomStack.slice(0, i + 1));
                   if ((window as any).zoomTreemapToNode) {
                     (window as any).zoomTreemapToNode(node.data.name);
                   }
@@ -596,12 +572,16 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                 className="text-[10px] font-mono text-emerald-500/70 hover:text-emerald-400 transition-colors max-w-[120px] truncate"
               >
                 {node.data.name.split(' (')[0]}
+                {/* PID annotation in breadcrumb — forensically useful */}
+                {(node.data as any).pid && (
+                  <span className="text-slate-600 text-[9px] ml-0.5">[{(node.data as any).pid}]</span>
+                )}
               </button>
             </React.Fragment>
           ))}
         </div>
       </div>
-      
+
       <div className="relative flex-1 overflow-hidden rounded bg-slate-950/50 border border-slate-800">
         {loading && !data ? (
           <div className="h-[500px] flex items-center justify-center">
@@ -612,14 +592,14 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           </div>
         ) : (
           <div className="relative h-[500px]">
-            <svg 
-              ref={svgRef} 
-              width="100%" 
-              height="500" 
+            <svg
+              ref={svgRef}
+              width="100%"
+              height="500"
               className="w-full h-full"
               viewBox={`0 0 ${containerRef.current?.clientWidth || 800} 500`}
             />
-            
+
             <AnimatePresence>
               {selectedProcess && (
                 <motion.div
@@ -633,18 +613,16 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                       <Info className="w-4 h-4 text-emerald-400" />
                       <span className="text-[10px] font-mono text-slate-300 uppercase tracking-widest">Inspector</span>
                     </div>
-                    <button 
-                      onClick={() => {
-                        setSelectedProcess(null);
-                        if (onSelectProcess) onSelectProcess(null);
-                      }} 
+                    <button
+                      onClick={() => { setSelectedProcess(null); if (onSelectProcess) onSelectProcess(null); }}
                       className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  
+
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                    {/* Command */}
                     <div className="p-3 bg-black/40 rounded border border-slate-800">
                       <div className="text-[9px] text-slate-600 uppercase mb-1 font-bold flex items-center justify-between">
                         <span>Command</span>
@@ -655,42 +633,38 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                       </div>
                     </div>
 
+                    {/* Latency Risk with explanation */}
                     <div className="p-3 bg-slate-900/30 rounded border border-slate-800/50">
                       <div className="text-[9px] text-slate-600 uppercase mb-2 font-bold">Latency Risk Assessment</div>
-                      <div className="flex items-center gap-3">
-                        {(() => {
-                          const cpu = (selectedProcess as any).cpu || 0;
-                          const stat = (selectedProcess as any).stat || '';
-                          const isHot = hotPids?.has((selectedProcess as any).pid || '');
-                          
-                          let risk = 'Low';
-                          let color = 'text-emerald-400';
-                          let bg = 'bg-emerald-500/10';
-                          
-                          if (stat.includes('D') || cpu > 90) {
-                            risk = 'Critical';
-                            color = 'text-red-400';
-                            bg = 'bg-red-500/20';
-                          } else if (cpu > 50 || (isHot && cpu > 20)) {
-                            risk = 'High';
-                            color = 'text-orange-400';
-                            bg = 'bg-orange-500/15';
-                          } else if (isHot || cpu > 10) {
-                            risk = 'Moderate';
-                            color = 'text-amber-400';
-                            bg = 'bg-amber-500/10';
-                          }
-                          
-                          return (
-                            <div className={`flex-1 flex items-center justify-between px-3 py-2 rounded ${bg} border border-white/5`}>
+                      {(() => {
+                        const cpu = (selectedProcess as any).cpu || 0;
+                        const stat = (selectedProcess as any).stat || '';
+                        const isHot = hotPids?.has((selectedProcess as any).pid || '');
+
+                        let risk = 'Low';
+                        let color = 'text-emerald-400';
+                        let bg = 'bg-emerald-500/10';
+
+                        if (stat.includes('D') || cpu > 90) { risk = 'Critical'; color = 'text-red-400'; bg = 'bg-red-500/20'; }
+                        else if (cpu > 50 || (isHot && cpu > 20)) { risk = 'High'; color = 'text-orange-400'; bg = 'bg-orange-500/15'; }
+                        else if (isHot || cpu > 10) { risk = 'Moderate'; color = 'text-amber-400'; bg = 'bg-amber-500/10'; }
+
+                        return (
+                          <>
+                            <div className={`flex items-center justify-between px-3 py-2 rounded ${bg} border border-white/5`}>
                               <span className={`text-xs font-bold uppercase tracking-tighter ${color}`}>{risk}</span>
                               <Activity className={`w-4 h-4 ${color} ${risk !== 'Low' ? 'animate-pulse' : ''}`} />
                             </div>
-                          );
-                        })()}
-                      </div>
+                            {/* One-line explanation so users know what drives the badge */}
+                            <p className="text-[9px] text-slate-500 mt-2 leading-relaxed">
+                              {riskExplanation(risk, stat)}
+                            </p>
+                          </>
+                        );
+                      })()}
                     </div>
 
+                    {/* CPU / MEM */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
                         <div className="text-[9px] text-slate-600 uppercase mb-1">CPU</div>
@@ -702,6 +676,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                       </div>
                     </div>
 
+                    {/* State / PPID */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
                         <div className="text-[9px] text-slate-600 uppercase mb-1">State</div>
@@ -713,11 +688,15 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                       </div>
                     </div>
 
+                    {/* Start time — formatted */}
                     <div className="p-2 bg-slate-900/50 rounded border border-slate-800">
                       <div className="text-[9px] text-slate-600 uppercase mb-1">Start Time</div>
-                      <div className="text-[10px] font-mono text-slate-400">{(selectedProcess as any).startTime || 'N/A'}</div>
+                      <div className="text-[10px] font-mono text-slate-400">
+                        {formatStartTime((selectedProcess as any).startTime)}
+                      </div>
                     </div>
 
+                    {/* Forensic Trace / Full Audit Log */}
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="text-[9px] text-slate-600 uppercase mb-2 flex items-center justify-between">
                         <span className="flex items-center gap-1">
@@ -725,7 +704,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                           {showFullLog ? 'Full Audit Log' : 'Forensic Trace'}
                         </span>
                         <div className="flex items-center gap-2">
-                          <button 
+                          <button
                             onClick={() => setShowFullLog(!showFullLog)}
                             className={`px-1.5 py-0.5 rounded text-[8px] border transition-colors ${showFullLog ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
                           >
@@ -734,43 +713,88 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
                           {loadingLogs && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-500" />}
                         </div>
                       </div>
+
                       <div className="flex-1 bg-black/60 rounded border border-slate-800/50 p-2 overflow-y-auto custom-scrollbar font-mono text-[9px] leading-tight min-h-[200px]">
                         {showFullLog ? (
-                          (isProbing ? probeOutput.flatMap(c => c.split('\n')) : runLogs).map((log, i) => {
-                            const isModule = log.includes('[MODULE:');
-                            const isMetric = log.includes('[METRIC:');
-                            const isError = log.includes('[ERROR]') || log.includes('[CRITICAL]');
-                            
+                          // Full audit log with pagination
+                          (() => {
+                            const lines = isProbing
+                              ? (probeOutput ?? []).flatMap(c => c.split('\n'))
+                              : runLogs;
+                            const visible = lines.slice(0, logLimit);
                             return (
-                              <div key={i} className={`mb-1 transition-colors ${
-                                isModule ? 'text-emerald-400 font-bold border-l border-emerald-500/50 pl-1' : 
-                                isMetric ? 'text-blue-400' :
-                                isError ? 'text-red-400' :
-                                'text-slate-500 hover:text-slate-300'
-                              }`}>
-                                {log}
-                              </div>
+                              <>
+                                <p className="text-[9px] text-slate-600 mb-2">
+                                  {visible.length} of {lines.length} lines
+                                  {selectedRunMode && (
+                                    <span className="ml-2 opacity-60">· run mode: {selectedRunMode}</span>
+                                  )}
+                                </p>
+                                {visible.map((log, i) => (
+                                  <div key={i} className={`mb-1 transition-colors ${logLineClass(log)}`}>
+                                    {log}
+                                  </div>
+                                ))}
+                                {logLimit < lines.length && (
+                                  <button
+                                    onClick={() => setLogLimit(l => l + 200)}
+                                    className="mt-3 w-full py-1.5 text-[9px] font-mono text-slate-500 border border-slate-800 rounded hover:border-slate-600 hover:text-slate-300 transition-colors"
+                                  >
+                                    Load 200 more ({lines.length - logLimit} remaining)
+                                  </button>
+                                )}
+                              </>
                             );
-                          })
+                          })()
                         ) : selectedProcessLogs.length > 0 ? (
-                          selectedProcessLogs.map((log, i) => {
-                            const isMetric = log.includes('[METRIC:');
-                            return (
-                              <div key={i} className={`mb-1.5 border-l-2 border-slate-800 pl-2 py-1 ${isMetric ? 'text-blue-400' : 'text-slate-400'}`}>
-                                {log}
-                              </div>
-                            );
-                          })
+                          selectedProcessLogs.map((log, i) => (
+                            <div key={i} className={`mb-1.5 border-l-2 border-slate-800 pl-2 py-1 ${log.includes('[METRIC:') ? 'text-blue-400' : 'text-slate-400'}`}>
+                              {log}
+                            </div>
+                          ))
                         ) : (
-                          <div className="text-slate-700 italic flex flex-col items-center justify-center h-full gap-2 py-10 px-4 text-center">
-                            <Activity className="w-4 h-4 opacity-10" />
-                            <span className="text-[8px] uppercase tracking-widest">No traces recorded</span>
+                          // Zero-trace state: explain why and auto-show full log next tick
+                          <div className="flex flex-col gap-3 py-6 px-3">
+                            <div className="flex items-center gap-2">
+                              <Activity className="w-3 h-3 text-amber-500/60 shrink-0" />
+                              <span className="text-[9px] text-amber-500/80 font-mono uppercase tracking-widest">
+                                No per-process lines captured
+                              </span>
+                            </div>
+                            <p className="text-[9px] text-slate-500 leading-relaxed">
+                              The probe's sampling window
+                              {selectedRunMode ? ` (${selectedRunMode})` : ''} did not observe{' '}
+                              <span className="text-emerald-400 font-mono">
+                                {selectedProcess.name.split(' ')[0]}
+                              </span>{' '}
+                              (PID {(selectedProcess as any).pid}) during this run.
+                            </p>
                             {selectedRunMode === 'MODULE:DEPS' && (
-                              <p className="text-[8px] text-slate-500 mt-2 normal-case leading-relaxed">
-                                Run mode <span className="text-emerald-500">DEPS</span> only verifies tool availability. 
-                                Switch to <span className="text-blue-500">Standard</span> or <span className="text-purple-500">Advanced</span> mode to capture process traces.
+                              <p className="text-[9px] text-slate-500 leading-relaxed">
+                                DEPS mode only verifies tool availability — switch to{' '}
+                                <span className="text-blue-400">Standard</span> or{' '}
+                                <span className="text-purple-400">Advanced</span> to capture process traces.
                               </p>
                             )}
+                            <p className="text-[9px] text-slate-600">
+                              Showing full audit log below ↓
+                            </p>
+                            <div className="border-t border-slate-800 pt-3">
+                              <p className="text-[9px] text-slate-600 mb-2">
+                                {runLogs.slice(0, logLimit).length} of {runLogs.length} lines
+                              </p>
+                              {runLogs.slice(0, logLimit).map((log, i) => (
+                                <div key={i} className={`mb-1 ${logLineClass(log)}`}>{log}</div>
+                              ))}
+                              {logLimit < runLogs.length && (
+                                <button
+                                  onClick={() => setLogLimit(l => l + 200)}
+                                  className="mt-3 w-full py-1.5 text-[9px] font-mono text-slate-500 border border-slate-800 rounded hover:border-slate-600 hover:text-slate-300 transition-colors"
+                                >
+                                  Load 200 more ({runLogs.length - logLimit} remaining)
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -782,7 +806,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
           </div>
         )}
       </div>
-      
+
       <div className="mt-3 flex items-center gap-4 text-[9px] font-mono text-slate-500 uppercase tracking-wider">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
@@ -798,9 +822,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
             <span>Hot</span>
           </div>
         </div>
-        
         <div className="h-3 w-px bg-slate-800 mx-2" />
-        
         <div className="flex items-center gap-1">
           <Minimize2 className="w-3 h-3" />
           <span>Click to Zoom</span>
