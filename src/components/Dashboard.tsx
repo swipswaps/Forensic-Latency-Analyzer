@@ -58,19 +58,25 @@ export const Dashboard: React.FC = () => {
     if (isProbing && selectedProcess && probeOutput.length > 0) {
       const lastChunk = probeOutput[probeOutput.length - 1];
       const lines = lastChunk.split('\n');
-      const relevantLines = lines.filter(line => 
-        line.toLowerCase().includes(selectedProcess.name.toLowerCase())
-      );
+      const processName = selectedProcess.name.split(' (')[0].toLowerCase();
+      const pid = (selectedProcess as any).pid;
+
+      const relevantLines = lines.filter(line => {
+        const lowerLine = line.toLowerCase();
+        return lowerLine.includes(processName) || (pid && lowerLine.includes(pid));
+      });
+
       if (relevantLines.length > 0) {
-        setSelectedProcessLogs(prev => [...prev, ...relevantLines].slice(-50));
+        setSelectedProcessLogs(prev => [...prev, ...relevantLines].slice(-100));
       }
     }
   }, [probeOutput, isProbing, selectedProcess]);
 
-  const fetchProcessLogs = async (processName: string) => {
+  const fetchProcessLogs = async (processName: string, pid?: string) => {
     setLoadingLogs(true);
     try {
-      const response = await fetch(`/api/process-logs/${encodeURIComponent(processName)}`);
+      const url = `/api/process-logs/${encodeURIComponent(processName)}${pid ? `?pid=${pid}` : ''}`;
+      const response = await fetch(url);
       const data = await response.json();
       setSelectedProcessLogs(data.logs || []);
     } catch (error) {
@@ -82,9 +88,20 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     if (selectedProcess) {
-      fetchProcessLogs(selectedProcess.name);
+      const name = selectedProcess.name.split(' (')[0];
+      const pid = (selectedProcess as any).pid;
+      fetchProcessLogs(name, pid);
+      
+      // If probing, poll for logs to keep it live
+      let interval: NodeJS.Timeout;
+      if (isProbing) {
+        interval = setInterval(() => fetchProcessLogs(name, pid), 3000);
+      }
+      return () => {
+        if (interval) clearInterval(interval);
+      };
     }
-  }, [selectedProcess]);
+  }, [selectedProcess, isProbing]);
 
   const fetchRuns = async () => {
     try {
@@ -107,6 +124,7 @@ export const Dashboard: React.FC = () => {
     try {
       const params = new URLSearchParams({
         advanced: advanced.toString(),
+        loop: "5"
       });
       
       const response = await fetch(`/api/run-probe?${params.toString()}`);
@@ -328,8 +346,18 @@ export const Dashboard: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <div className="text-[9px] text-slate-600 uppercase mb-1">Weight</div>
-                        <div className="text-xs font-mono text-slate-300">{selectedProcess.value || 1}</div>
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">CPU Usage</div>
+                        <div className="text-xs font-mono text-blue-400">{(selectedProcess as any).cpu || 0}%</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">Memory</div>
+                        <div className="text-xs font-mono text-purple-400">{(selectedProcess as any).mem || 0}%</div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[9px] text-slate-600 uppercase mb-1">PID</div>
+                        <div className="text-xs font-mono text-slate-300">{(selectedProcess as any).pid || 'N/A'}</div>
                       </div>
                       <div>
                         <div className="text-[9px] text-slate-600 uppercase mb-1">Children</div>

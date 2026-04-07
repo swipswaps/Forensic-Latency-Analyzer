@@ -62,7 +62,7 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
   }, [isLive, runId, metricKey]);
 
   useEffect(() => {
-    if (data.length === 0 || !svgRef.current || !containerRef.current) return;
+    if (!svgRef.current || !containerRef.current) return;
 
     const margin = { top: 20, right: 20, bottom: 30, left: 40 };
     const width = containerRef.current.clientWidth - margin.left - margin.right;
@@ -71,17 +71,28 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
+    // Default scales if no data
+    const now = new Date();
+    const fiveMinsAgo = new Date(now.getTime() - 5 * 60 * 1000);
+    
     const x = d3.scaleTime()
-      .domain(d3.extent(data, (d: MetricData) => new Date(d.timestamp)) as [Date, Date])
+      .domain(data.length > 0 
+        ? d3.extent(data, (d: MetricData) => new Date(d.timestamp)) as [Date, Date]
+        : [fiveMinsAgo, now])
       .range([0, width]);
 
     const y = d3.scaleLinear()
-      .domain([0, d3.max(data, (d: MetricData) => d.value) as number || 100])
+      .domain([0, Math.max(10, d3.max(data, (d: MetricData) => d.value) as number || 0)])
       .nice()
       .range([height, 0]);
 
     const g = svg.append('g')
       .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Add grid lines
+    g.append('g')
+      .attr('class', 'grid text-slate-800/20')
+      .call(d3.axisLeft(y).ticks(5).tickSize(-width).tickFormat(() => ''));
 
     // Add gradient
     const gradientId = `gradient-${metricKey}`;
@@ -103,30 +114,43 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
       .attr('stop-color', color)
       .attr('stop-opacity', 0);
 
-    const area = d3.area<MetricData>()
-      .x(d => x(new Date(d.timestamp)))
-      .y0(height)
-      .y1(d => y(d.value))
-      .curve(d3.curveMonotoneX);
+    if (data.length > 0) {
+      const area = d3.area<MetricData>()
+        .x(d => x(new Date(d.timestamp)))
+        .y0(height)
+        .y1(d => y(d.value))
+        .curve(d3.curveMonotoneX);
 
-    const line = d3.line<MetricData>()
-      .x(d => x(new Date(d.timestamp)))
-      .y(d => y(d.value))
-      .curve(d3.curveMonotoneX);
+      const line = d3.line<MetricData>()
+        .x(d => x(new Date(d.timestamp)))
+        .y(d => y(d.value))
+        .curve(d3.curveMonotoneX);
 
-    g.append('path')
-      .datum(data)
-      .attr('class', `area-${metricKey}`)
-      .attr('fill', `url(#${gradientId})`)
-      .attr('d', area);
+      g.append('path')
+        .datum(data)
+        .attr('class', `area-${metricKey}`)
+        .attr('fill', `url(#${gradientId})`)
+        .attr('d', area);
 
-    g.append('path')
-      .datum(data)
-      .attr('class', `line-${metricKey}`)
-      .attr('fill', 'none')
-      .attr('stroke', color)
-      .attr('stroke-width', 2)
-      .attr('d', line);
+      g.append('path')
+        .datum(data)
+        .attr('class', `line-${metricKey}`)
+        .attr('fill', 'none')
+        .attr('stroke', color)
+        .attr('stroke-width', 2)
+        .attr('d', line);
+    } else {
+      // Show a "Scanning" line or just the empty grid
+      g.append('line')
+        .attr('x1', 0)
+        .attr('y1', y(0))
+        .attr('x2', width)
+        .attr('y2', y(0))
+        .attr('stroke', color)
+        .attr('stroke-width', 1)
+        .attr('stroke-dasharray', '4,4')
+        .attr('opacity', 0.3);
+    }
 
     // Axes
     const xAxis = g.append('g')
@@ -146,19 +170,21 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
         const newX = event.transform.rescaleX(x);
         xAxis.call(d3.axisBottom(newX).ticks(5).tickFormat(d3.timeFormat('%H:%M:%S') as any) as any);
         
-        const updatedLine = d3.line<MetricData>()
-          .x(d => newX(new Date(d.timestamp)))
-          .y(d => y(d.value))
-          .curve(d3.curveMonotoneX);
+        if (data.length > 0) {
+          const updatedLine = d3.line<MetricData>()
+            .x(d => newX(new Date(d.timestamp)))
+            .y(d => y(d.value))
+            .curve(d3.curveMonotoneX);
 
-        const updatedArea = d3.area<MetricData>()
-          .x(d => newX(new Date(d.timestamp)))
-          .y0(height)
-          .y1(d => y(d.value))
-          .curve(d3.curveMonotoneX);
+          const updatedArea = d3.area<MetricData>()
+            .x(d => newX(new Date(d.timestamp)))
+            .y0(height)
+            .y1(d => y(d.value))
+            .curve(d3.curveMonotoneX);
 
-        g.select(`.line-${metricKey}`).attr('d', updatedLine(data));
-        g.select(`.area-${metricKey}`).attr('d', updatedArea(data));
+          g.select(`.line-${metricKey}`).attr('d', updatedLine(data));
+          g.select(`.area-${metricKey}`).attr('d', updatedArea(data));
+        }
       });
 
     svg.call(zoom as any);
@@ -169,8 +195,11 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
     <div className="technical-panel p-4" ref={containerRef} id={`chart-${metricKey}`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-slate-400" style={{ color }} />
+          <Activity className={`w-4 h-4 ${isLive ? 'animate-pulse text-emerald-400' : 'text-slate-400'}`} style={!isLive ? { color } : {}} />
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</h3>
+          {isLive && (
+            <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -189,7 +218,7 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
             className="p-1 hover:bg-slate-800 rounded transition-colors text-slate-500 hover:text-emerald-400"
             title="Refresh Data"
           >
-            <Activity className={`w-3 h-3 ${loading ? 'animate-pulse' : ''}`} />
+            <Activity className={`w-3 h-3 ${loading ? 'animate-pulse text-emerald-400' : ''}`} />
           </button>
           <div className="flex items-center gap-1 text-[10px] font-mono text-slate-600">
             <ZoomIn className="w-3 h-3" />
@@ -199,35 +228,25 @@ export const MetricChart: React.FC<MetricChartProps> = ({ title, runId, runMode,
       </div>
       
       <div className="relative h-[200px] w-full">
-        {loading ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+        {loading && data.length === 0 && (
+          <div className="absolute top-0 left-0 w-full h-0.5 bg-slate-800 overflow-hidden z-10">
+            <div className="h-full bg-emerald-500 animate-progress origin-left" />
           </div>
-        ) : isSkipped ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
-            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
-              Metric Not Captured
-            </div>
-            <div className="text-[9px] font-mono text-slate-600 italic">
-              PSI diagnostics are bypassed in {runMode} module to optimize forensic throughput.
-            </div>
+        )}
+        
+        <svg 
+          ref={svgRef} 
+          width="100%" 
+          height="200" 
+          className="w-full h-full overflow-visible"
+        />
+
+        {isSkipped && data.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="text-[9px] font-mono text-slate-700 uppercase tracking-widest bg-black/40 px-2 py-1 rounded">
+              Module Bypass Active
+            </span>
           </div>
-        ) : data.length === 0 ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
-            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
-              No Data Points Recorded
-            </div>
-            <div className="text-[9px] font-mono text-slate-600 italic">
-              {runId === 0 ? "Real-time metrics are streaming to the database." : "The probe did not record pressure stalls during this audit window."}
-            </div>
-          </div>
-        ) : (
-          <svg 
-            ref={svgRef} 
-            width="100%" 
-            height="200" 
-            className="w-full h-full overflow-visible"
-          />
         )}
       </div>
     </div>

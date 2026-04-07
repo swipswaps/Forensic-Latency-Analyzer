@@ -20,6 +20,21 @@ interface DoctorResult {
   };
 }
 
+interface SystemMetrics {
+  cpus: any[];
+  memory: {
+    total: number;
+    free: number;
+    used: number;
+    percent: number;
+  };
+  loadAvg: number[];
+  uptime: number;
+  platform: string;
+  release: string;
+  arch: string;
+}
+
 interface SystemDiagnostics {
   oomd?: string;
   dbus?: string;
@@ -31,23 +46,28 @@ interface SystemDiagnostics {
 export default function DoctorReport() {
   const [results, setResults] = useState<DoctorResult | null>(null);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
+  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [networkRaw, setNetworkRaw] = useState("");
 
   const fetchDoctor = async () => {
     setLoading(true);
     try {
-      const [doctorRes, networkRes, diagRes] = await Promise.all([
+      const [doctorRes, networkRes, diagRes, metricsRes] = await Promise.all([
         fetch("/api/doctor"),
         fetch("/api/network"),
-        fetch("/api/system-diagnostics")
+        fetch("/api/system-diagnostics"),
+        fetch("/api/system-metrics")
       ]);
       const doctorData = await doctorRes.json();
       const networkData = await networkRes.json();
       const diagData = await diagRes.json();
+      const metricsData = await metricsRes.json();
+      
       setResults(doctorData);
       setNetworkRaw(networkData.raw);
       setDiagnostics(diagData);
+      setSystemMetrics(metricsData);
       setLoading(false);
     } catch (err) {
       console.error("Failed to fetch doctor report", err);
@@ -67,12 +87,20 @@ export default function DoctorReport() {
     );
   }
 
+  const okCount = (Object.values(results) as any[]).filter(r => r.status === "OK").length;
+  const totalCount = Object.values(results).length;
+  const integrityScore = Math.round((okCount / totalCount) * 100);
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="grid grid-cols-12 gap-6">
         {/* Tool Availability */}
         <div className="col-span-12 lg:col-span-5 space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-10">
+              <ShieldCheck className="w-24 h-24" />
+            </div>
+            
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <div className="bg-emerald-500/20 p-2 rounded-lg">
@@ -83,26 +111,26 @@ export default function DoctorReport() {
                   <p className="text-xs text-slate-500 font-mono">Binary availability audit</p>
                 </div>
               </div>
-              <button 
-                onClick={fetchDoctor}
-                className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-500 hover:text-blue-400"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] font-mono text-slate-500 uppercase">Integrity Score</span>
+                <span className={`text-xl font-bold font-mono ${integrityScore > 80 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {integrityScore}%
+                </span>
+              </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
               {Object.entries(results).map(([tool, res]: [string, any]) => (
-                <div key={tool} className="flex items-center justify-between p-3 bg-slate-800/30 border border-slate-800 rounded-lg group hover:border-slate-700 transition-all">
+                <div key={tool} className="flex items-center justify-between p-2.5 bg-slate-800/30 border border-slate-800 rounded-lg group hover:border-slate-700 transition-all">
                   <div className="flex items-center gap-3">
                     {res.status === "OK" ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                     ) : (
-                      <XCircle className="w-4 h-4 text-red-400" />
+                      <XCircle className="w-3.5 h-3.5 text-red-400" />
                     )}
-                    <span className="text-sm font-mono font-bold text-slate-300">{tool}</span>
+                    <span className="text-xs font-mono font-bold text-slate-300">{tool}</span>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
                     res.status === "OK" ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
                   }`}>
                     {res.status}
@@ -112,95 +140,94 @@ export default function DoctorReport() {
             </div>
           </div>
 
-          {/* Security Summary */}
+          {/* System Environment */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl">
             <div className="flex items-center gap-3 mb-6">
               <div className="bg-blue-500/20 p-2 rounded-lg">
-                <Activity className="w-5 h-5 text-blue-400" />
+                <Cpu className="w-5 h-5 text-blue-400" />
               </div>
               <div>
-                <h3 className="font-bold text-white">Health Summary</h3>
-                <p className="text-xs text-slate-500 font-mono">System integrity assessment</p>
+                <h3 className="font-bold text-white">System Environment</h3>
+                <p className="text-xs text-slate-500 font-mono">Kernel & Hardware Specs</p>
               </div>
             </div>
             
             <div className="space-y-4">
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl border-l-4 border-l-blue-500">
-                <p className="text-sm text-slate-300 leading-relaxed">
-                  The forensic toolchain is {(Object.values(results) as any[]).every(r => r.status === "OK") ? "fully operational" : "partially degraded"}. 
-                  {results.perf && results.perf.status === "MISSING" && " Performance profiling (perf) is unavailable. "}
-                  {results.bpftrace && results.bpftrace.status === "MISSING" && " BPF tracing capabilities are restricted. "}
-                  Ensure the host has the required kernel headers and tracing utilities installed for full transparency.
-                </p>
-              </div>
-
-              {diagnostics && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-slate-800/30 border border-slate-800 rounded-lg">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">systemd-oomd</p>
-                    <p className={`text-xs font-mono font-bold ${diagnostics.oomd === 'active' ? 'text-emerald-400' : 'text-slate-400'}`}>
-                      {diagnostics.oomd || 'unknown'}
-                    </p>
+              {systemMetrics && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                    <p className="text-[9px] text-slate-500 font-bold uppercase mb-1">Kernel Release</p>
+                    <p className="text-xs font-mono text-slate-300 truncate">{systemMetrics.release}</p>
                   </div>
-                  <div className="p-3 bg-slate-800/30 border border-slate-800 rounded-lg">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">dbus-broker</p>
-                    <p className={`text-xs font-mono font-bold ${diagnostics.dbus === 'active' ? 'text-emerald-400' : 'text-slate-400'}`}>
-                      {diagnostics.dbus || 'unknown'}
-                    </p>
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                    <p className="text-[9px] text-slate-500 font-bold uppercase mb-1">Architecture</p>
+                    <p className="text-xs font-mono text-slate-300">{systemMetrics.arch.toUpperCase()}</p>
                   </div>
-                  <div className="p-3 bg-slate-800/30 border border-slate-800 rounded-lg col-span-2">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">Entropy Availability</p>
-                    <div className="flex items-center justify-between">
-                      <p className={`text-xs font-mono font-bold ${Number(diagnostics.entropy) < 200 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {diagnostics.entropy || '0'} bits
-                      </p>
-                      <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-500 ${Number(diagnostics.entropy) < 200 ? 'bg-amber-400' : 'bg-emerald-400'}`}
-                          style={{ width: `${Math.min(100, (Number(diagnostics.entropy) / 4096) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                    <p className="text-[9px] text-slate-500 font-bold uppercase mb-1">CPU Topology</p>
+                    <p className="text-xs font-mono text-slate-300">{systemMetrics.cpus.length} Cores</p>
+                  </div>
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                    <p className="text-[9px] text-slate-500 font-bold uppercase mb-1">Uptime</p>
+                    <p className="text-xs font-mono text-slate-300">{Math.floor(systemMetrics.uptime / 3600)}h {Math.floor((systemMetrics.uptime % 3600) / 60)}m</p>
                   </div>
                 </div>
               )}
+
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl border-l-4 border-l-blue-500">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  The forensic toolchain is {integrityScore === 100 ? "fully operational" : integrityScore > 70 ? "partially degraded" : "severely restricted"}. 
+                  {results.perf && results.perf.status === "MISSING" && " Performance profiling (perf) is unavailable. "}
+                  {results.bpftrace && results.bpftrace.status === "MISSING" && " BPF tracing capabilities are restricted. "}
+                </p>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Network Connections */}
-        <div className="col-span-12 lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl flex flex-col h-[calc(100vh-18rem)]">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-purple-500/20 p-2 rounded-lg">
-              <Zap className="w-5 h-5 text-purple-400" />
+        {/* Network & Diagnostics */}
+        <div className="col-span-12 lg:col-span-7 space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl flex flex-col h-[calc(100vh-18rem)]">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-purple-500/20 p-2 rounded-lg">
+                  <Zap className="w-5 h-5 text-purple-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">Network Forensic Table</h3>
+                  <p className="text-xs text-slate-500 font-mono">Active sockets & connection states</p>
+                </div>
+              </div>
+              <button 
+                onClick={fetchDoctor}
+                className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-500 hover:text-purple-400"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
             </div>
-            <div>
-              <h3 className="font-bold text-white">Network Forensic Table</h3>
-              <p className="text-xs text-slate-500 font-mono">Active sockets & connection states</p>
-            </div>
-          </div>
 
-          <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col mb-4">
-            <div className="bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-700">
-              <Terminal className="w-3 h-3 text-slate-400" />
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ss -tunap output</span>
-            </div>
-            <pre className="flex-1 p-4 font-mono text-[10px] text-slate-400 overflow-auto custom-scrollbar whitespace-pre leading-tight">
-              {networkRaw || "No network data available."}
-            </pre>
-          </div>
-
-          {diagnostics?.interrupts && (
-            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col mb-4">
               <div className="bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-700">
                 <Terminal className="w-3 h-3 text-slate-400" />
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Interrupt Distribution (Top 20)</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ss -tunap output</span>
               </div>
-              <pre className="flex-1 p-4 font-mono text-[10px] text-slate-400 overflow-auto custom-scrollbar whitespace-pre leading-tight">
-                {diagnostics.interrupts}
+              <pre className="flex-1 p-4 font-mono text-[9px] text-slate-400 overflow-auto custom-scrollbar whitespace-pre leading-tight">
+                {networkRaw || "No network data available."}
               </pre>
             </div>
-          )}
+
+            {diagnostics?.interrupts && (
+              <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+                <div className="bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-700">
+                  <Terminal className="w-3 h-3 text-slate-400" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Interrupt Distribution (Top 20)</span>
+                </div>
+                <pre className="flex-1 p-4 font-mono text-[9px] text-slate-400 overflow-auto custom-scrollbar whitespace-pre leading-tight">
+                  {diagnostics.interrupts}
+                </pre>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

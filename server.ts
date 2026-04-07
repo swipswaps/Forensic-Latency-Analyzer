@@ -166,20 +166,42 @@ async function startServer() {
 
   app.get("/api/process-tree", async (req, res) => {
     try {
-      const { stdout } = await execAsync("ps -ax -o ppid,pid,comm --no-headers");
+      // Get detailed process info: ppid, pid, %cpu, %mem, comm
+      const { stdout } = await execAsync("ps -ax -o ppid,pid,%cpu,%mem,comm --no-headers");
       const lines = stdout.trim().split("\n");
       const nodes: any = {};
-      const tree: any = { name: "root", children: [] };
+      const tree: any = { name: "root", children: [], value: 0 };
 
       lines.forEach(line => {
-        const [ppid, pid, ...commParts] = line.trim().split(/\s+/);
-        const comm = commParts.join(" ");
-        nodes[pid] = { name: `${comm} (${pid})`, children: [], value: 1 };
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 5) return;
+        const ppid = parts[0];
+        const pid = parts[1];
+        const cpu = parseFloat(parts[2]);
+        const mem = parseFloat(parts[3]);
+        const comm = parts.slice(4).join(" ");
+        
+        // Use a combination of CPU and Memory for the "value" (size) of the block
+        // We add a small baseline (0.1) so idle processes are still visible
+        const value = Math.max(0.1, cpu + mem);
+        
+        nodes[pid] = { 
+          name: `${comm} (${pid})`, 
+          children: [], 
+          value,
+          cpu,
+          mem,
+          pid
+        };
       });
 
       lines.forEach(line => {
-        const [ppid, pid] = line.trim().split(/\s+/);
-        if (nodes[ppid] && nodes[pid]) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 2) return;
+        const ppid = parts[0];
+        const pid = parts[1];
+        
+        if (nodes[ppid] && nodes[pid] && ppid !== pid) {
           nodes[ppid].children.push(nodes[pid]);
         } else if (nodes[pid]) {
           tree.children.push(nodes[pid]);
@@ -247,12 +269,21 @@ async function startServer() {
 
   app.get("/api/process-logs/:processName", async (req, res) => {
     try {
-      const processName = req.params.processName.split(" (")[0]; // Remove PID if present
+      const { pid } = req.query;
+      const processName = req.params.processName.split(" (")[0]; // Base name
+      
       const files = fs.readdirSync(LOG_DIR).filter(f => f.endsWith(".log")).sort().reverse();
       if (files.length === 0) return res.json({ logs: ["No logs found."] });
       
       const latestLog = path.join(LOG_DIR, files[0]);
-      const { stdout } = await execAsync(`grep -i "${processName}" "${latestLog}" | tail -n 20 || echo "No specific logs for ${processName}"`);
+      
+      // Search for either the process name or the PID
+      let grepPattern = processName;
+      if (pid) {
+        grepPattern = `${processName}\\|${pid}`;
+      }
+      
+      const { stdout } = await execAsync(`grep -i "${grepPattern}" "${latestLog}" | tail -n 50 || echo "No specific logs for ${processName} (PID: ${pid || 'N/A'})"`);
       res.json({ logs: stdout.split("\n").filter(l => l.trim().length > 0) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
