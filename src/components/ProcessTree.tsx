@@ -63,17 +63,21 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
     
     setLoadingLogs(true);
     try {
+      const cleanName = processName.replace(/^\[self\]\s+/, '').split(' (')[0].toLowerCase();
+      const cleanPid = pid?.replace(/-self$/, '');
+
       if (runLogs.length > 0) {
-        const lowerName = processName.toLowerCase();
         const filtered = runLogs.filter(line => {
           const lowerLine = line.toLowerCase();
-          return lowerLine.includes(lowerName) || (pid && lowerLine.includes(pid));
+          const matchesName = lowerLine.includes(cleanName);
+          const matchesPid = cleanPid && lowerLine.includes(cleanPid);
+          return matchesName || matchesPid;
         });
         setSelectedProcessLogs(filtered);
         return;
       }
 
-      const url = `/api/process-logs/${encodeURIComponent(processName)}${pid ? `?pid=${pid}` : ''}`;
+      const url = `/api/process-logs/${encodeURIComponent(cleanName)}${cleanPid ? `?pid=${cleanPid}` : ''}`;
       const response = await fetch(url);
       const data = await response.json();
       setSelectedProcessLogs(data.logs || []);
@@ -86,7 +90,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
 
   useEffect(() => {
     if (selectedProcess) {
-      const name = selectedProcess.name.split(' (')[0];
+      const name = selectedProcess.name;
       const pid = (selectedProcess as any).pid;
       fetchProcessLogs(name, pid);
     }
@@ -95,23 +99,31 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   // Live log filtering
   useEffect(() => {
     if (isProbing && selectedProcess && probeOutput && probeOutput.length > 0) {
-      const lastChunk = probeOutput[probeOutput.length - 1];
-      const lines = lastChunk.split('\n');
-      const processName = selectedProcess.name.split(' (')[0].toLowerCase();
-      const pid = (selectedProcess as any).pid;
+      const processName = selectedProcess.name.replace(/^\[self\]\s+/, '').split(' (')[0].toLowerCase();
+      const pid = (selectedProcess as any).pid?.replace(/-self$/, '');
+      
       // Hardened Regex: Matches boundary PID or common formats like pid=123, pid: 123
       const pidRegex = pid ? new RegExp(`(\\b${pid}\\b|pid[=:]\\s*${pid})`, 'i') : null;
 
-      const relevantLines = lines.filter(line => {
-        const lowerLine = line.toLowerCase();
-        const matchesName = lowerLine.includes(processName);
-        const matchesPid = pidRegex ? pidRegex.test(line) : false;
-        return matchesName || matchesPid;
-      });
+      // When selectedProcess changes, we might want to scan the entire history
+      // But for performance, we usually just append new lines.
+      // To fix "no traces" on selection, we scan the whole probeOutput once.
+      
+      const filterLines = (chunks: string[]) => {
+        const allLines = chunks.flatMap(chunk => chunk.split('\n'));
+        return allLines.filter(line => {
+          if (!line.trim()) return false;
+          const lowerLine = line.toLowerCase();
+          const matchesName = lowerLine.includes(processName);
+          const matchesPid = pidRegex ? pidRegex.test(line) : false;
+          return matchesName || matchesPid;
+        });
+      };
 
-      if (relevantLines.length > 0) {
-        setSelectedProcessLogs(prev => [...prev, ...relevantLines].slice(-100));
-      }
+      // If this is the first time we're filtering for this process, scan everything
+      setSelectedProcessLogs(filterLines(probeOutput).slice(-100));
+    } else if (!selectedProcess) {
+      setSelectedProcessLogs([]);
     }
   }, [probeOutput, isProbing, selectedProcess]);
 
