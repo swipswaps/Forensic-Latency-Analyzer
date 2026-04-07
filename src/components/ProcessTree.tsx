@@ -32,6 +32,9 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<d3.HierarchyNode<ProcessNode>[]>([]);
   
+  const valueCache = useRef<Map<string, number>>(new Map());
+  const searchIndex = useRef<Map<string, d3.HierarchyNode<ProcessNode>>>(new Map());
+  
   const [selectedProcessLogs, setSelectedProcessLogs] = useState<string[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [runLogs, setRunLogs] = useState<string[]>([]);
@@ -96,10 +99,14 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       const lines = lastChunk.split('\n');
       const processName = selectedProcess.name.split(' (')[0].toLowerCase();
       const pid = (selectedProcess as any).pid;
+      // Hardened Regex: Matches boundary PID or common formats like pid=123, pid: 123
+      const pidRegex = pid ? new RegExp(`(\\b${pid}\\b|pid[=:]\\s*${pid})`, 'i') : null;
 
       const relevantLines = lines.filter(line => {
         const lowerLine = line.toLowerCase();
-        return lowerLine.includes(processName) || (pid && lowerLine.includes(pid));
+        const matchesName = lowerLine.includes(processName);
+        const matchesPid = pidRegex ? pidRegex.test(line) : false;
+        return matchesName || matchesPid;
       });
 
       if (relevantLines.length > 0) {
@@ -113,7 +120,29 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
     try {
       const response = await fetch('/api/process-tree');
       const json = await response.json();
+      
+      // Compliance FIX: Metric Smoothing
+      const smooth = (node: ProcessNode) => {
+        const key = node.pid || node.name;
+        const prevValue = valueCache.current.get(key) || node.value || 0.1;
+        const newValue = node.value || 0.1;
+        const smoothedValue = (prevValue * 0.7) + (newValue * 0.3);
+        node.value = Math.max(0.1, smoothedValue);
+        valueCache.current.set(key, node.value);
+        if (node.children) node.children.forEach(smooth);
+      };
+      smooth(json);
+      
       setData(json);
+      
+      // Compliance FIX: Global Search Index
+      const root = d3.hierarchy(json);
+      const index = new Map();
+      root.descendants().forEach(d => {
+        if (d.data.pid) index.set(d.data.pid.toString(), d);
+        index.set(d.data.name.toLowerCase(), d);
+      });
+      searchIndex.current = index;
     } catch (error) {
       console.error('Failed to fetch process tree:', error);
     } finally {
@@ -125,6 +154,15 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
     if (historicalData) {
       setData(historicalData);
       setLoading(false);
+      
+      // Index historical data too
+      const root = d3.hierarchy(historicalData);
+      const index = new Map();
+      root.descendants().forEach(d => {
+        if (d.data.pid) index.set(d.data.pid.toString(), d);
+        index.set(d.data.name.toLowerCase(), d);
+      });
+      searchIndex.current = index;
     } else {
       fetchData();
     }
@@ -140,13 +178,33 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
 
+    // Data-level LOD: Prune tiny nodes before layout to save compute
+    const pruneTree = (node: ProcessNode): ProcessNode | null => {
+      if (!node.children || node.children.length === 0) return node;
+      
+      const prunedChildren = node.children
+        .map(pruneTree)
+        .filter((child): child is ProcessNode => child !== null && (child.value || 0) > 0.05);
+        
+      return { ...node, children: prunedChildren };
+    };
+
+    const processedData = pruneTree(data);
+    if (!processedData) return;
+
+    // Data Integrity Check
+    if (!processedData.name || !Array.isArray(processedData.children)) {
+      console.error("[FORENSIC:INTEGRITY] Process tree data contract violation detected.", processedData);
+      return;
+    }
+
     const updateTreemap = () => {
       if (!containerRef.current || !svgRef.current) return;
       const width = containerRef.current.clientWidth;
       const height = 500;
       const svg = d3.select(svgRef.current);
 
-      const root = d3.hierarchy(data)
+      const root = d3.hierarchy(processedData)
         .sum(d => d.value || 0.1)
         .sort((a, b) => (b.value || 0) - (a.value || 0));
 
@@ -159,6 +217,14 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
 
       treemap(root);
 
+      // Re-index on every render to ensure nodes match current hierarchy
+      const index = new Map();
+      root.descendants().forEach(d => {
+        if (d.data.pid) index.set(d.data.pid.toString(), d);
+        index.set(d.data.name.toLowerCase(), d);
+      });
+      searchIndex.current = index;
+
       const color = d3.scaleThreshold<number, string>()
         .domain([1, 5, 10, 25, 50])
         .range(['#1e293b', '#334155', '#475569', '#3b82f6', '#8b5cf6', '#ef4444']);
@@ -167,7 +233,11 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       let defs = svg.select('defs');
       if (defs.empty()) defs = svg.append('defs');
       
-      const gradientData = root.descendants();
+      const gradientData = root.descendants().filter(d => {
+        const dx = (d as any).x1 - (d as any).x0;
+        const dy = (d as any).y1 - (d as any).y0;
+        return dx > 2 && dy > 2;
+      });
       const gradients = defs.selectAll('linearGradient')
         .data(gradientData, (d: any) => d.data.pid || d.data.name);
 
@@ -192,7 +262,11 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       });
 
       // Manage cells
-      const cellData = root.descendants() as d3.HierarchyRectangularNode<ProcessNode>[];
+      const cellData = root.descendants().filter(d => {
+        const dx = (d as any).x1 - (d as any).x0;
+        const dy = (d as any).y1 - (d as any).y0;
+        return dx > 2 && dy > 2;
+      }) as d3.HierarchyRectangularNode<ProcessNode>[];
       const cells = svg.selectAll<SVGGElement, d3.HierarchyRectangularNode<ProcessNode>>('g.process-node-group')
         .data(cellData, (d: any) => d.data.pid || d.data.name);
 
@@ -209,6 +283,7 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
         .on('click', (event, d) => {
           event.stopPropagation();
           if (onSelectProcess) onSelectProcess(d.data);
+          setSelectedProcess(d.data);
           if (d.children) {
             setZoomStack(prev => [...prev, d as d3.HierarchyRectangularNode<ProcessNode>]);
             zoom(d as d3.HierarchyRectangularNode<ProcessNode>);
@@ -335,20 +410,25 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({ onSelectProcess, isPro
       return;
     }
 
-    const root = d3.hierarchy(data);
-    const results = root.descendants().filter(d => 
-      d.data.pid?.toString().includes(query) || 
-      d.data.name.toLowerCase().includes(query.toLowerCase())
-    );
-    setSearchResults(results);
+    // Compliance FIX: Search using global index
+    const results: d3.HierarchyNode<ProcessNode>[] = [];
+    const lowerQuery = query.toLowerCase();
+    
+    searchIndex.current.forEach((node, key) => {
+      if (key.includes(lowerQuery) && !results.includes(node)) {
+        results.push(node);
+      }
+    });
+    
+    setSearchResults(results.slice(0, 10));
   };
 
   const jumpToNode = (node: d3.HierarchyNode<ProcessNode>) => {
-    if (node.parent) {
-      setZoomStack([node.parent as d3.HierarchyRectangularNode<ProcessNode>]);
-    } else {
-      setZoomStack([]);
-    }
+    // Compliance FIX: Reconstruct zoom stack to "drill down"
+    const ancestors = node.ancestors().reverse();
+    const stack = ancestors.slice(1, -1) as d3.HierarchyRectangularNode<ProcessNode>[];
+    setZoomStack(stack);
+    
     setSearchQuery('');
     setSearchResults([]);
     

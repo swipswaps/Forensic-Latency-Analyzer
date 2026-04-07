@@ -1,4 +1,10 @@
 #!/bin/bash
+set -e
+
+# Environment Checks
+command -v python3 >/dev/null 2>&1 || { echo "Error: python3 required but not found in PATH."; exit 1; }
+command -v npm >/dev/null 2>&1 || { echo "Error: npm required but not found in PATH."; exit 1; }
+
 # =============================================================================
 # setup.sh - Cold-start recovery and update script
 # =============================================================================

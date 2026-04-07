@@ -11,7 +11,8 @@ import {
   Activity,
   Clock,
   HardDrive,
-  X
+  X,
+  Maximize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -441,8 +442,16 @@ export const Dashboard: React.FC = () => {
                       {new Date(run.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
-                  <div className="text-xs font-medium text-slate-300 truncate mb-1">
-                    Mode: {run.mode}
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs font-medium text-slate-300 truncate">
+                      Mode: {run.mode}
+                    </div>
+                    {(run as any).has_tree && (
+                      <div className="flex items-center gap-1 text-[8px] font-bold text-emerald-500 bg-emerald-500/10 px-1 rounded border border-emerald-500/20">
+                        <Maximize2 className="w-2 h-2" />
+                        SNAPSHOT
+                      </div>
+                    )}
                   </div>
                   <div className="text-[10px] text-slate-500 line-clamp-2 italic">
                     {run.summary ? (

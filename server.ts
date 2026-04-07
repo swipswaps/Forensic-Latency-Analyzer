@@ -197,13 +197,20 @@ async function startServer() {
         });
       });
 
-      const root: any = { name: "system-root", children: [], value: 0 };
+      const root: any = { 
+        name: "system-root", 
+        children: [], 
+        value: 0, 
+        version: "1.1", // Schema versioning
+        timestamp: new Date().toISOString()
+      };
       
       nodes.forEach((node, pid) => {
         const parent = nodes.get(node.ppid);
         if (parent && node.ppid !== pid) {
           parent.children.push(node);
-        } else {
+        } else if (node.ppid !== pid) {
+          // If parent not found, attach to root (prevents orphans)
           root.children.push(node);
         }
       });
@@ -373,7 +380,7 @@ async function startServer() {
 
   app.get("/api/db/runs", (req, res) => {
     try {
-      const rows = db.prepare("SELECT * FROM runs ORDER BY id DESC LIMIT 50").all();
+      const rows = db.prepare("SELECT id, timestamp, mode, status, summary, (process_tree IS NOT NULL) as has_tree FROM runs ORDER BY id DESC LIMIT 50").all();
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

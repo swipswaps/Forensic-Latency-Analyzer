@@ -701,9 +701,16 @@ def capture_process_tree():
         for child in root["children"]:
             add_self(child)
             
-        return json.dumps(root)
-    except Exception:
-        return None
+        # Compliance FIX: Validate JSON before returning
+        try:
+            json_data = json.dumps(root)
+            json.loads(json_data) # Ensure it's parseable
+            return json_data
+        except (TypeError, ValueError):
+            return json.dumps({"name": "root", "children": [], "value": 0})
+    except Exception as e:
+        print(f"[ERROR] Failed to capture process tree: {e}")
+        return json.dumps({"name": "root", "children": [], "value": 0})
 
 def generate_html_report():
     print(f"\n[MODULE:REPORT] GENERATING HTML DASHBOARD: {HTML_FILE}")
