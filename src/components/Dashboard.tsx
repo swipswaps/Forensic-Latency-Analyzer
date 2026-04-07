@@ -77,7 +77,22 @@ export const Dashboard: React.FC = () => {
   const [isProbing, setIsProbing] = useState(false);
   const [probeOutput, setProbeOutput] = useState<string[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
+  // liveAlerts: populated in real time from [STORM:] and [RANKED_ALERT] SSE lines
+  // so Critical Findings updates while the probe is still running.
+  const [liveAlerts, setLiveAlerts] = useState<string[]>([]);
+  // liveMetrics: keyed by metric name, holds latest value parsed from SSE stream
+  // so PSI charts update during the probe run without waiting for DB write.
+  const [liveMetrics, setLiveMetrics] = useState<Record<string, number>>({});
   const [historicalTree, setHistoricalTree] = useState<ProcessNode | null>(null);
+  // Fix 4: ref for the live terminal div — scrolled to bottom on every new line
+  const terminalRef = React.useRef<HTMLDivElement>(null);
+
+  // Fix 4: scroll terminal to bottom whenever probeOutput grows
+  React.useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [probeOutput]);
 
   const fetchHistoricalTree = async (runId: number) => {
     try {
@@ -113,14 +128,78 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  // Fix 8: abort controller so Stop button can cancel the SSE stream
+  const probeAbortRef = React.useRef<AbortController | null>(null);
+
+  const stopProbe = () => {
+    if (probeAbortRef.current) {
+      probeAbortRef.current.abort();
+      probeAbortRef.current = null;
+    }
+    setIsProbing(false);
+    setProbeOutput(prev => [...prev, '\n[STOPPED] Probe aborted by user.']);
+  };
+
+  // Fix 6: Firefox-only sweep — uses /api/run-firefox-forensic SSE endpoint
+  const runFirefoxSweep = async () => {
+    setIsProbing(true);
+    setProbeOutput([]);
+    setLiveAlerts([]);
+    setLiveMetrics({});
+    setShowTerminal(true);
+    const controller = new AbortController();
+    probeAbortRef.current = controller;
+    try {
+      const response = await fetch('/api/run-firefox-forensic', { signal: controller.signal });
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(line.substring(6));
+                setProbeOutput(prev => [...prev, json.text].slice(-500));
+                if (json.text.includes('[STORM:') || json.text.includes('[RANKED_ALERT]')) {
+                  const alerts = json.text.split('\n').filter(
+                    (l: string) => l.includes('[STORM:') || l.includes('[RANKED_ALERT]')
+                  );
+                  if (alerts.length) setLiveAlerts(prev => [...new Set([...prev, ...alerts])]);
+                }
+              } catch (e) {}
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        setProbeOutput(prev => [...prev, `\n[CRITICAL] ${err.message}`]);
+      }
+    } finally {
+      probeAbortRef.current = null;
+      setIsProbing(false);
+    }
+  };
+
   const runProbe = async (advanced = false) => {
     setIsProbing(true);
     setProbeOutput([]);
+    setLiveAlerts([]);
+    setLiveMetrics({});
     setShowTerminal(true);
 
     try {
       const params = new URLSearchParams({ advanced: advanced.toString() });
-      const response = await fetch(`/api/run-probe?${params.toString()}`);
+      // Fix 8: attach abort controller so Stop button can cancel mid-run
+      const controller = new AbortController();
+      probeAbortRef.current = controller;
+      const response = await fetch(`/api/run-probe?${params.toString()}`, { signal: controller.signal });
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
@@ -149,6 +228,22 @@ export const Dashboard: React.FC = () => {
                   }
                 }
 
+                // Fix 5: parse [METRIC:KEY] VALUE lines for live chart updates
+                const metricMatches = [...text.matchAll(/\[METRIC:([A-Z0-9_]+)\]\s+([\d.]+)/g)];
+                for (const m of metricMatches) {
+                  setLiveMetrics(prev => ({ ...prev, [m[1]]: parseFloat(m[2]) }));
+                }
+
+                // Fix 3: parse storm and ranked alerts into liveAlerts in real time
+                if (text.includes('[STORM:') || text.includes('[RANKED_ALERT]')) {
+                  const lines = text.split('\n').filter(
+                    l => l.includes('[STORM:') || l.includes('[RANKED_ALERT]')
+                  );
+                  if (lines.length > 0) {
+                    setLiveAlerts(prev => [...new Set([...prev, ...lines])]);
+                  }
+                }
+
                 if (text.includes('[RUN_ID]')) {
                   const runId = parseInt(text.split('[RUN_ID]')[1].trim());
                   if (!isNaN(runId)) {
@@ -163,7 +258,7 @@ export const Dashboard: React.FC = () => {
                   }
                 }
 
-                setProbeOutput(prev => [...prev, text].slice(-100));
+                setProbeOutput(prev => [...prev, text].slice(-500));
               } catch (e) {
                 console.error('Failed to parse SSE line', line);
               }
@@ -173,7 +268,12 @@ export const Dashboard: React.FC = () => {
       }
 
       await fetchRuns();
-    } catch (error) {
+    } catch (error: any) {
+      // Fix 8: AbortError is user-initiated — don't treat as failure
+      if (error?.name === 'AbortError') {
+        setProbeOutput(prev => [...prev, '\n[STOPPED] Probe aborted by user.']);
+        return;
+      }
       console.error('Probe failed:', error);
       const errorMsg = error instanceof TypeError && error.message.includes('fetch')
         ? 'Network Error: Server unreachable or connection refused.'
@@ -305,7 +405,9 @@ export const Dashboard: React.FC = () => {
           <div>
             <div className="metric-label">Active Alerts</div>
             <div className="metric-value text-rose-400">
-              {selectedRun?.summary ? selectedRun.summary.split('\n').filter(l => l.includes('CRITICAL')).length : '0'}
+              {isProbing
+                ? liveAlerts.filter(l => l.includes('CRITICAL') || l.includes('[STORM:')).length
+                : selectedRun?.summary ? selectedRun.summary.split('\n').filter(l => l.includes('CRITICAL')).length : 0}
             </div>
           </div>
         </motion.div>
@@ -389,10 +491,32 @@ export const Dashboard: React.FC = () => {
               </button>
             </div>
 
+            {/* Fix 6: Firefox Sweep button — targeted 30s Firefox-only diagnostic */}
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button
+                disabled={isProbing}
+                onClick={() => runFirefoxSweep()}
+                className="col-span-1 flex items-center justify-center gap-2 py-2 px-3 bg-orange-500/10 border border-orange-500/30 rounded text-[10px] font-mono text-orange-400 hover:bg-orange-500/20 disabled:opacity-50 transition-all"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                Firefox Sweep
+              </button>
+              {/* Fix 8: Stop Probe button — visible only while probing */}
+              {isProbing && (
+                <button
+                  onClick={() => stopProbe()}
+                  className="col-span-1 flex items-center justify-center gap-2 py-2 px-3 bg-red-500/10 border border-red-500/30 rounded text-[10px] font-mono text-red-400 hover:bg-red-500/20 transition-all"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Stop
+                </button>
+              )}
+            </div>
+
             {showTerminal && (
               <div className="relative group mt-4 overflow-hidden rounded border border-slate-800 bg-black/90">
                 <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%] z-10 opacity-30" />
-                <div className="h-48 p-3 font-mono text-[9px] text-emerald-500/90 overflow-y-auto custom-scrollbar whitespace-pre-wrap relative z-0">
+                <div ref={terminalRef} className="h-48 p-3 font-mono text-[9px] text-emerald-500/90 overflow-y-auto custom-scrollbar whitespace-pre-wrap relative z-0">
                   {probeOutput.length === 0 ? (
                     <div className="flex items-center gap-2 animate-pulse">
                       <span className="w-1.5 h-3 bg-emerald-500" />
@@ -501,13 +625,14 @@ export const Dashboard: React.FC = () => {
               <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Critical Findings</h3>
             </div>
             <div className="space-y-3">
-              {selectedRun?.summary ? (
-                selectedRun.summary.split('\n').map((line, i) =>
+              {/* Fix 3: show liveAlerts during probe, fall back to DB summary when done */}
+              {(isProbing ? liveAlerts : (selectedRun?.summary?.split('\n').filter(Boolean) ?? [])).length > 0 ? (
+                (isProbing ? liveAlerts : selectedRun!.summary.split('\n')).map((line, i) =>
                   line.trim() && (
                     <div key={i} className="flex gap-3 p-3 rounded bg-rose-500/5 border border-rose-500/10">
                       <div className="mt-0.5">
-                        {line.includes('CRITICAL')
-                          ? <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+                        {line.includes('CRITICAL') || line.includes('[STORM:')
+                          ? <AlertTriangle className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
                           : <Activity className="w-3.5 h-3.5 text-amber-500" />}
                       </div>
                       <div className="text-[11px] font-mono text-slate-300 leading-relaxed">{line}</div>
@@ -518,7 +643,8 @@ export const Dashboard: React.FC = () => {
                 <div className="text-center py-8 flex flex-col items-center gap-3">
                   <Shield className="w-8 h-8 text-emerald-500/20" />
                   <div className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">
-                    {selectedRun?.status === 'SUCCESS' ? 'System Healthy - No Anomalies' : 'No Anomalies Detected'}
+                    {isProbing ? 'Scanning — alerts appear here in real time' :
+                     selectedRun?.status === 'SUCCESS' ? 'System Healthy - No Anomalies' : 'No Anomalies Detected'}
                   </div>
                 </div>
               )}

@@ -239,6 +239,20 @@ async function startServer() {
   // loop= was causing the probe to restart every 5 seconds indefinitely,
   // which meant only the first (DEPS) iteration's output reached the client
   // before the SSE stream became congested and the UI stopped updating.
+  // Fix 8: track the active probe process so Stop button can kill it
+  let activeProbeProcess: ReturnType<typeof spawn> | null = null;
+
+  // Stop endpoint — kills the currently running probe
+  app.get("/api/run-probe/stop", (req, res) => {
+    if (activeProbeProcess && activeProbeProcess.exitCode === null) {
+      activeProbeProcess.kill("SIGKILL");
+      activeProbeProcess = null;
+      res.json({ ok: true, message: "Probe stopped." });
+    } else {
+      res.json({ ok: false, message: "No probe is currently running." });
+    }
+  });
+
   app.get("/api/run-probe", (req, res) => {
     const { advanced, module } = req.query;
     // Note: loop is intentionally NOT read from query params here.
@@ -254,6 +268,7 @@ async function startServer() {
     res.flushHeaders();
 
     const pythonProcess = spawn("python3", ["-u", ...args]);
+    activeProbeProcess = pythonProcess;
 
     const sendSSE = (data: string) => {
       if (res.writableEnded) return;
@@ -266,6 +281,7 @@ async function startServer() {
     pythonProcess.stderr.on("data", (data) => sendSSE(`[STDERR] ${data.toString()}`));
 
     pythonProcess.on("close", (code, signal) => {
+      activeProbeProcess = null;
       const status = code !== null ? `CODE ${code}` : `SIGNAL ${signal}`;
       sendSSE(`\n[PROCESS COMPLETED WITH ${status}]\n`);
       if (!res.writableEnded) res.end();

@@ -83,6 +83,8 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({
   // showFullLog: true = full audit log, false = filtered per-process trace.
   // Auto-set to true when traces are zero (see effect below).
   const [showFullLog, setShowFullLog] = useState(false);
+  // Fix 7: inline signal status shown in Inspector after Pause/Resume/Kill
+  const [signalStatus, setSignalStatus] = useState<{ok: boolean; msg: string} | null>(null);
 
   const fetchRunLogs = async (runId: number) => {
     setLoadingLogs(true);
@@ -137,6 +139,11 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({
       fetchProcessLogs(selectedProcess.name, (selectedProcess as any).pid);
     }
   }, [selectedProcess, runLogs, isProbing]);
+
+  // Fix 7: clear signal status when a different process is selected
+  React.useEffect(() => {
+    setSignalStatus(null);
+  }, [(selectedProcess as any)?.pid]);
 
   // Auto-expand full log when traces are zero — eliminates the "Show Full" click.
   useEffect(() => {
@@ -716,12 +723,14 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({
                               <button
                                 key={sig}
                                 onClick={async () => {
+                                  setSignalStatus(null);
                                   try {
                                     const r = await fetch(`/api/signal-process?pid=${pid}&signal=${sig}`);
                                     const d = await r.json();
-                                    console.log('[SIGNAL]', d);
-                                  } catch (e) {
-                                    console.error('[SIGNAL:ERROR]', e);
+                                    // Fix 7: show result inline in Inspector, not just DevTools
+                                    setSignalStatus({ ok: d.ok, msg: d.message?.split('\n').find((l: string) => l.includes('[SIGNAL:')) || d.message });
+                                  } catch (e: any) {
+                                    setSignalStatus({ ok: false, msg: e.message });
                                   }
                                 }}
                                 className={`py-1 text-[9px] font-mono font-bold border rounded transition-colors ${color}`}
@@ -733,6 +742,16 @@ export const ProcessTree: React.FC<ProcessTreeProps> = ({
                           <p className="text-[8px] text-slate-700 mt-1.5">
                             Sends POSIX signal to PID {pid} ({name}). Pause freezes CPU use without terminating.
                           </p>
+                          {/* Fix 7: inline signal result — replaces console.log */}
+                          {signalStatus && (
+                            <div className={`mt-2 px-2 py-1.5 rounded text-[9px] font-mono border ${
+                              signalStatus.ok
+                                ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300'
+                                : 'bg-red-900/30 border-red-700/50 text-red-300'
+                            }`}>
+                              {signalStatus.msg}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
